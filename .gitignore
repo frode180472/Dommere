@@ -1,31 +1,6 @@
-# Python / Virtual Environment
-__pycache__/
-*.py[cod]
-*$py.class
-.venv/
-venv/
-env/
-Lib/
-Scripts/
-
-# Databaser (Sørger for at du ikke overskriver server-data med lokal data)
+*.xlsx
+*.xls
 *.db
-kamper.db
-
-# Genererte filer og PDF-er
-output/
-*.pdf
-
-# Google API / Hemmeligheter
-token.json
-credentials.json
+*.sqlite
+__pycache__/
 .env
-
-# MacOS / Windows OS-filer
-.DS_Store
-Thumbs.db
-
-# IDE / Editor
-.vscode/
-.idea/
-*.swp
