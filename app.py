@@ -6,6 +6,9 @@ import streamlit as st
 import base64
 from datetime import date
 from weasyprint import HTML
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # ==========================================
 # 1. KONSTANTER & ALIASER
@@ -36,42 +39,16 @@ def inject_custom_css():
     st.markdown('''
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Play:wght@400;700&display=swap');
-
         .stApp { background: linear-gradient(135deg, #fcfcfc 0%, #f0f0f0 100%); }
         h1, h2, h3, h4, h5, h6, .st-emotion-cache-10trblm { color: #1f1f1f !important; font-family: 'Play', sans-serif; letter-spacing: -0.5px; }
-
-        .main-title {
-            text-align: left; font-size: 3rem; font-weight: 800;
-            background: -webkit-linear-gradient(45deg, #FF5800, #FF8C00);
-            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-            margin-bottom: 2rem; padding-top: 1rem;
-        }
-
+        .main-title { text-align: left; font-size: 3rem; font-weight: 800; background: -webkit-linear-gradient(45deg, #FF5800, #FF8C00); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 2rem; padding-top: 1rem; }
         .st-emotion-cache-10trblm { border-bottom: 2px solid #eaeaea; padding-bottom: 10px; margin-bottom: 20px; }
-
-        .stButton > button[kind="primary"] {
-            background: linear-gradient(90deg, #FF5800 0%, #FF8C00 100%);
-            color: white; border: none; border-radius: 8px;
-            box-shadow: 0 4px 8px rgba(255, 88, 0, 0.25); transition: all 0.3s ease;
-            font-family: 'Arial', sans-serif; font-weight: bold;
-        }
+        .stButton > button[kind="primary"] { background: linear-gradient(90deg, #FF5800 0%, #FF8C00 100%); color: white; border: none; border-radius: 8px; box-shadow: 0 4px 8px rgba(255, 88, 0, 0.25); transition: all 0.3s ease; font-family: 'Arial', sans-serif; font-weight: bold; }
         .stButton > button[kind="primary"]:hover { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(255, 88, 0, 0.4); color: white; }
-
-        .stButton > button[kind="secondary"] {
-            border: 2px solid #1f1f1f; color: #1f1f1f; border-radius: 8px; transition: all 0.3s ease;
-            background-color: white; font-family: 'Arial', sans-serif; font-weight: bold;
-        }
-        .stButton > button[kind="secondary"]:hover {
-            border: 2px solid #FF5800; color: #FF5800; background-color: #fffaf6;
-            transform: translateY(-2px); box-shadow: 0 4px 8px rgba(255, 88, 0, 0.1);
-        }
-
+        .stButton > button[kind="secondary"] { border: 2px solid #1f1f1f; color: #1f1f1f; border-radius: 8px; transition: all 0.3s ease; background-color: white; font-family: 'Arial', sans-serif; font-weight: bold; }
+        .stButton > button[kind="secondary"]:hover { border: 2px solid #FF5800; color: #FF5800; background-color: #fffaf6; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(255, 88, 0, 0.1); }
         .stDataFrame { border: none !important; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); background-color: white; padding: 10px; }
-
-        .streamlit-expanderHeader {
-            font-size: 1.1rem; font-family: 'Play', sans-serif; font-weight: 700; color: #1f1f1f;
-            border-radius: 8px; background-color: white; box-shadow: 0 2px 5px rgba(0,0,0,0.02); margin-bottom: 5px;
-        }
+        .streamlit-expanderHeader { font-size: 1.1rem; font-family: 'Play', sans-serif; font-weight: 700; color: #1f1f1f; border-radius: 8px; background-color: white; box-shadow: 0 2px 5px rgba(0,0,0,0.02); margin-bottom: 5px; }
     </style>
     ''', unsafe_allow_html=True)
 
@@ -86,71 +63,88 @@ def get_db_connection():
 
 def init_db(conn):
     c = conn.cursor()
-    c.execute('''
-              CREATE TABLE IF NOT EXISTS kamper
-              (
-                  kampnr
-                  TEXT
-                  PRIMARY
-                  KEY,
-                  runde
-                  TEXT,
-                  dato
-                  TEXT,
-                  tid
-                  TEXT,
-                  hjemmelag
-                  TEXT,
-                  bortelag
-                  TEXT,
-                  bane
-                  TEXT,
-                  arrangor
-                  TEXT,
-                  dommer_1
-                  TEXT,
-                  dommer_2
-                  TEXT,
-                  observator
-                  TEXT,
-                  turnering
-                  TEXT
-              )
-              ''')
-
-    c.execute('''
-              CREATE TABLE IF NOT EXISTS dommer_status
-              (
-                  navn
-                  TEXT
-                  PRIMARY
-                  KEY,
-                  aktiv
-                  BOOLEAN
-              )
-              ''')
+    c.execute('''CREATE TABLE IF NOT EXISTS kamper
+                 (
+                     kampnr
+                     TEXT
+                     PRIMARY
+                     KEY,
+                     runde
+                     TEXT,
+                     dato
+                     TEXT,
+                     tid
+                     TEXT,
+                     hjemmelag
+                     TEXT,
+                     bortelag
+                     TEXT,
+                     bane
+                     TEXT,
+                     arrangor
+                     TEXT,
+                     dommer_1
+                     TEXT,
+                     dommer_2
+                     TEXT,
+                     observator
+                     TEXT,
+                     turnering
+                     TEXT
+                 )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS dommer_status
+                 (
+                     navn
+                     TEXT
+                     PRIMARY
+                     KEY,
+                     aktiv
+                     BOOLEAN
+                 )''')
 
     try:
         c.execute("ALTER TABLE dommer_status ADD COLUMN type_dommer TEXT")
     except sqlite3.OperationalError:
         pass
 
-        # Ny tabell for dommerkontakter med tilknytning til FLERE lag
+    c.execute('''CREATE TABLE IF NOT EXISTS dommer_ansvar
+                 (
+                     navn
+                     TEXT
+                     PRIMARY
+                     KEY,
+                     epost
+                     TEXT,
+                     telefon
+                     TEXT,
+                     lag_liste
+                     TEXT
+                 )''')
+
+    # --- NYTT: Låsing mot TA og Dommerønsker ---
+
+    # 1. Prøver å legge til "Låst"-kolonnen i eksisterende database (feiler stille hvis den allerede finnes)
+    try:
+        c.execute("ALTER TABLE kamper ADD COLUMN laast BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+        # 2. Oppretter tabellen der dommernes interesser lagres
     c.execute('''
-              CREATE TABLE IF NOT EXISTS dommer_ansvar
+              CREATE TABLE IF NOT EXISTS dommer_onsker
               (
-                  navn
-                  TEXT
-                  PRIMARY
-                  KEY,
-                  epost
+                  kampnr
                   TEXT,
-                  telefon
+                  dommer_navn
                   TEXT,
-                  lag_liste
-                  TEXT
+                  UNIQUE
+              (
+                  kampnr,
+                  dommer_navn
               )
+                  )
               ''')
+
     conn.commit()
 
 
@@ -160,7 +154,6 @@ def load_data(conn):
 
 def sync_referees_to_db(db_df, conn, filepath='dommere.xlsx'):
     dommer_info = {}
-
     if os.path.exists(filepath):
         try:
             df_dommere = pd.read_excel(filepath)
@@ -168,7 +161,6 @@ def sync_referees_to_db(db_df, conn, filepath='dommere.xlsx'):
                 df_dommere['Fullt Navn'] = df_dommere['Fornavn'].astype(str).str.strip() + " " + df_dommere[
                     'Etternavn'].astype(str).str.strip()
                 type_col = 'Dommer' if 'Dommer' in df_dommere.columns else None
-
                 for _, row in df_dommere.iterrows():
                     navn = str(row['Fullt Navn']).strip()
                     if navn and navn.lower() not in ['nan', 'none']:
@@ -176,7 +168,6 @@ def sync_referees_to_db(db_df, conn, filepath='dommere.xlsx'):
                         dommer_info[navn] = dtype
         except Exception as e:
             pass
-
     if not db_df.empty:
         for col in ['dommer_1', 'dommer_2', 'observator']:
             if col in db_df.columns:
@@ -185,7 +176,6 @@ def sync_referees_to_db(db_df, conn, filepath='dommere.xlsx'):
                     if navn_clean and navn_clean.lower() not in ['nan', 'none',
                                                                  'nat'] and navn_clean not in dommer_info:
                         dommer_info[navn_clean] = ""
-
     c = conn.cursor()
     for navn, dtype in dommer_info.items():
         c.execute("INSERT OR IGNORE INTO dommer_status (navn, type_dommer, aktiv) VALUES (?, ?, 1)", (navn, dtype))
@@ -202,87 +192,72 @@ def get_active_referees_list(conn):
 
 
 # ==========================================
-# 4. PDF GENERATOR
+# 4. PDF GENERATOR & EPOST
 # ==========================================
 def generate_schedule_pdf(df, title="Dommeroppsett"):
     df = df.fillna('')
     if 'dato' in df.columns and 'tid' in df.columns:
         df = df.sort_values(by=["dato", "tid"])
-
     table_html = ""
     current_date = ""
-
     for index, row in df.iterrows():
         if row["dato"] != current_date:
             table_html += f'<tr class="date-group"><td colspan="6">{row["dato"]}</td></tr>'
             current_date = row["dato"]
-
         kamp_info = f'<strong>{row.get("hjemmelag", "")} - {row.get("bortelag", "")}</strong><br><span class="desc">{row.get("turnering", "")}</span>'
-
         dommere = []
         if str(row.get("dommer_1", "")).strip(): dommere.append(f'D1: {row.get("dommer_1", "")}')
         if str(row.get("dommer_2", "")).strip(): dommere.append(f'D2: {row.get("dommer_2", "")}')
         if str(row.get("observator", "")).strip(): dommere.append(f'Obs: {row.get("observator", "")}')
         dommer_str = "<br>".join(dommere) if dommere else "<i>Ikke berammet</i>"
-
-        table_html += f'''
-        <tr>
-            <td style="white-space: nowrap;">{row.get("tid", "")}</td>
-            <td style="font-size: 8pt; color: #555;">{row.get("kampnr", "")}</td>
-            <td>{kamp_info}</td>
-            <td>{row.get("bane", "")}</td>
-            <td>{row.get("arrangor", "")}</td>
-            <td>{dommer_str}</td>
-        </tr>'''
+        table_html += f'''<tr><td style="white-space: nowrap;">{row.get("tid", "")}</td><td style="font-size: 8pt; color: #555;">{row.get("kampnr", "")}</td><td>{kamp_info}</td><td>{row.get("bane", "")}</td><td>{row.get("arrangor", "")}</td><td>{dommer_str}</td></tr>'''
 
     html_template = f'''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <link href="https://fonts.googleapis.com/css2?family=Play:wght@400;700&display=swap" rel="stylesheet">
-        <style>
-            @page {{ size: A4 landscape; margin-top: 18mm; margin-bottom: 15mm; margin-left: 15.4mm; margin-right: 15.4mm; background-color: #ffffff;
-                @bottom-right {{ content: "Side " counter(page) " av " counter(pages); font-family: 'Arial', sans-serif; font-size: 10pt; color: #1f1f1f; }}
-                @bottom-left {{ content: "Generert fra Kamp- og Dommersystem"; font-family: 'Arial', sans-serif; font-size: 10pt; color: #1f1f1f; }}
-            }}
-            body {{ font-family: 'Arial', sans-serif; margin: 0; padding: 0; color: #000000; }}
-
-            .header {{ padding-bottom: 10px; margin-bottom: 20px; width: 100%; border-bottom: 2px solid #FF5800; }}
-            .header h1 {{ margin: 0; color: #FF5800; font-family: 'Play', sans-serif; font-size: 24pt; padding-bottom: 5px; font-weight: normal; }}
-            .header .meta {{ font-size: 11pt; color: #1f1f1f; margin-top: 10px; font-family: 'Arial', sans-serif; }}
-
-            table {{ width: 100%; border-collapse: collapse; font-size: 10.5pt; margin-top: 15px; page-break-inside: avoid; }}
-            th {{ background-color: #f2f2f2; color: #000000; text-align: left; padding: 10px 8px; font-weight: bold; border: 1pt solid #000000; text-transform: uppercase; font-size: 9pt; letter-spacing: 0.5px; }}
-            td {{ padding: 10px 8px; border: 1pt solid #000000; vertical-align: top; line-height: 1.3; }}
-
-            .date-group td {{ background-color: #e2e8f0; color: #000000; font-weight: bold; font-size: 12pt; padding: 10px 8px; font-family: 'Play', sans-serif; border-bottom: 1pt solid #000000; }}
-            .desc {{ font-size: 9pt; color: #444; display: block; margin-top: 2px; font-style: italic; }}
-            tr {{ page-break-inside: avoid; }}
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <h1>{title}</h1>
-            <div class="meta">Utskriftsdato: <strong>{date.today().strftime('%d.%m.%Y')}</strong></div>
-        </div>
-        <table>
-            <thead>
-                <tr>
-                    <th style="width: 5%;">Tid</th>
-                    <th style="width: 10%;">Kampnr</th>
-                    <th style="width: 30%;">Kamp & Turnering</th>
-                    <th style="width: 20%;">Bane</th>
-                    <th style="width: 15%;">Arrangør</th>
-                    <th style="width: 20%;">Dommere / Obs</th>
-                </tr>
-            </thead>
-            <tbody>{table_html}</tbody>
-        </table>
-    </body>
-    </html>
-    '''
+    <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+    @page {{ size: A4 landscape; margin-top: 18mm; margin-bottom: 15mm; margin-left: 15.4mm; margin-right: 15.4mm; background-color: #ffffff; @bottom-right {{ content: "Side " counter(page) " av " counter(pages); font-family: 'Arial', sans-serif; font-size: 10pt; color: #1f1f1f; }} @bottom-left {{ content: "Generert fra Kamp- og Dommersystem"; font-family: 'Arial', sans-serif; font-size: 10pt; color: #1f1f1f; }} }}
+    body {{ font-family: 'Arial', sans-serif; margin: 0; padding: 0; color: #000000; }}
+    .header {{ padding-bottom: 10px; margin-bottom: 20px; width: 100%; border-bottom: 2px solid #FF5800; }}
+    .header h1 {{ margin: 0; color: #FF5800; font-family: 'Play', sans-serif; font-size: 24pt; padding-bottom: 5px; font-weight: normal; }}
+    .header .meta {{ font-size: 11pt; color: #1f1f1f; margin-top: 10px; font-family: 'Arial', sans-serif; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 10.5pt; margin-top: 15px; page-break-inside: avoid; }}
+    th {{ background-color: #f2f2f2; color: #000000; text-align: left; padding: 10px 8px; font-weight: bold; border: 1pt solid #000000; text-transform: uppercase; font-size: 9pt; letter-spacing: 0.5px; }}
+    td {{ padding: 10px 8px; border: 1pt solid #000000; vertical-align: top; line-height: 1.3; }}
+    .date-group td {{ background-color: #e2e8f0; color: #000000; font-weight: bold; font-size: 12pt; padding: 10px 8px; font-family: 'Play', sans-serif; border-bottom: 1pt solid #000000; }}
+    .desc {{ font-size: 9pt; color: #444; display: block; margin-top: 2px; font-style: italic; }}
+    tr {{ page-break-inside: avoid; }}
+    </style></head><body>
+    <div class="header"><h1>{title}</h1><div class="meta">Utskriftsdato: <strong>{date.today().strftime('%d.%m.%Y')}</strong></div></div>
+    <table><thead><tr><th style="width: 5%;">Tid</th><th style="width: 10%;">Kampnr</th><th style="width: 30%;">Kamp & Turnering</th><th style="width: 20%;">Bane</th><th style="width: 15%;">Arrangør</th><th style="width: 20%;">Dommere / Obs</th></tr></thead><tbody>{table_html}</tbody></table>
+    </body></html>'''
     return HTML(string=html_template, base_url=os.path.abspath(os.getcwd())).write_pdf()
+
+
+def send_velkomst_epost(mottaker_epost, navn, lag_liste_str):
+    try:
+        smtp_server = st.secrets["email"]["smtp_server"]
+        smtp_port = st.secrets["email"]["smtp_port"]
+        avsender = st.secrets["email"]["smtp_user"]
+        passord = st.secrets["email"]["smtp_password"]
+        admin_epost = st.secrets["email"]["admin_epost"]
+
+        msg = MIMEMultipart()
+        msg['From'] = avsender
+        msg['To'] = mottaker_epost
+        msg['Reply-To'] = admin_epost
+        msg['Subject'] = "Tilgang til nytt dommeroppsett"
+
+        body = f"""Hei {navn}!\n\nDu har nå fått tilgang som dommerkontakt i det nye systemet for dommeroppsett.\n\nDine ansvarsområder (lag): {lag_liste_str}\n\nSlik logger du inn:\n1. Gå til: https://dommere.streamlit.app\n2. Velg "Dommerkontakt / Lagleder" i menyen.\n3. Velg ditt navn i listen.\n4. Passordet er: håndball\n\nVI TESTER! Dette systemet er helt nytt. Vi setter utrolig stor pris på alle tilbakemeldinger. \nFinner du feil, mangler en funksjon, eller synes noe er ulogisk? \n-> Bare svar direkte på denne e-posten! <-\n\nVi vil gi deg beskjed så snart forbedringene er på plass.\n\nVennlig hilsen,\nAdministrator"""
+        msg.attach(MIMEText(body, 'plain'))
+
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(avsender, passord)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"Feil ved sending av e-post: {e}")
+        return False
 
 
 # ==========================================
@@ -295,6 +270,7 @@ conn = get_db_connection()
 init_db(conn)
 
 df_all = load_data(conn)
+# Laster inn fra eksisterende fil lokalt om den finnes, ellers håndteres det i skyen
 sync_referees_to_db(df_all, conn, 'dommere.xlsx')
 
 lag_liste = []
@@ -302,11 +278,9 @@ if not df_all.empty:
     hjemmelag = df_all['hjemmelag'].dropna().unique().tolist()
     lag_liste = sorted(list(set(hjemmelag)))
 
-# Hent dommerkontakter for innlogging
 df_ansvarlige = pd.read_sql_query("SELECT * FROM dommer_ansvar ORDER BY navn", conn)
 ansvarlig_navn_liste = df_ansvarlige['navn'].tolist() if not df_ansvarlige.empty else []
 
-# -- SIKKER SESSION STATE --
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user_role = "none"
@@ -318,7 +292,6 @@ st.sidebar.title("Innlogging")
 
 if not st.session_state.logged_in:
     login_type = st.sidebar.radio("Logg inn som:", ["Administrator", "Dommerkontakt / Lagleder"])
-
     if login_type == "Administrator":
         pwd = st.sidebar.text_input("Administrator passord", type="password")
         if st.sidebar.button("Logg inn", type="primary"):
@@ -328,7 +301,6 @@ if not st.session_state.logged_in:
                 st.rerun()
             else:
                 st.sidebar.error("Feil passord!")
-
     elif login_type == "Dommerkontakt / Lagleder":
         if not ansvarlig_navn_liste:
             st.sidebar.info("Ingen dommerkontakter er registrert ennå. Admin må opprette disse.")
@@ -337,10 +309,8 @@ if not st.session_state.logged_in:
             pwd = st.sidebar.text_input("Passord", type="password")
             if st.sidebar.button("Logg inn", type="primary"):
                 if valgt_navn and pwd.strip() == LAGLEDER_PASSORD:
-                    # Hent ut hvilke lag denne personen har ansvar for
                     lag_string = df_ansvarlige[df_ansvarlige['navn'] == valgt_navn]['lag_liste'].iloc[0]
                     mine_lag = [l.strip() for l in lag_string.split(",")] if pd.notna(lag_string) and lag_string else []
-
                     st.session_state.logged_in = True
                     st.session_state.user_role = "lagleder"
                     st.session_state.user_name = valgt_navn
@@ -353,7 +323,6 @@ else:
     st.sidebar.success(f"Logget inn som: {rolle_navn}")
     if st.session_state.user_role == "lagleder":
         st.sidebar.caption(f"Ansvar for: {', '.join(st.session_state.user_teams)}")
-
     if st.sidebar.button("Logg ut", type="secondary"):
         st.session_state.logged_in = False
         st.session_state.user_role = "none"
@@ -371,11 +340,11 @@ if user_role == "none":
     st.stop()
 
 if user_role == "admin":
-    # --- IMPORT FRA EXCEL ---
+    # --- IMPORT FRA EXCEL (KAMPER) ---
     with st.expander("Importér kamper fra Excel"):
         st.markdown("Last opp filen `kamper.xlsx` for å synkronisere database.")
-        uploaded_file = st.file_uploader("Last opp Excel-fil", type=["xlsx", "xls", "csv"])
-        if uploaded_file and st.button("Importér Data", type="primary"):
+        uploaded_file = st.file_uploader("Last opp Kamper (Excel)", type=["xlsx", "xls", "csv"])
+        if uploaded_file and st.button("Importér Kamper", type="primary"):
             try:
                 if uploaded_file.name.endswith('.csv'):
                     df_import = pd.read_csv(uploaded_file, sep=None, engine='python')
@@ -392,54 +361,68 @@ if user_role == "admin":
                 valid_cols = [col for col in df_final.columns if col in EXCEL_ALIASES.keys()]
                 df_final = df_final[valid_cols]
 
-                if 'dato' in df_final.columns:
-                    df_final['dato'] = pd.to_datetime(df_final['dato'], errors='coerce').dt.strftime('%Y-%m-%d')
-                if 'tid' in df_final.columns:
-                    df_final['tid'] = df_final['tid'].astype(str).str[:5]
-                if 'kampnr' in df_final.columns:
-                    df_final['kampnr'] = df_final['kampnr'].astype(str).str.replace(".0", "", regex=False)
-
+                if 'dato' in df_final.columns: df_final['dato'] = pd.to_datetime(df_final['dato'],
+                                                                                 errors='coerce').dt.strftime(
+                    '%Y-%m-%d')
+                if 'tid' in df_final.columns: df_final['tid'] = df_final['tid'].astype(str).str[:5]
+                if 'kampnr' in df_final.columns: df_final['kampnr'] = df_final['kampnr'].astype(str).str.replace(".0",
+                                                                                                                 "",
+                                                                                                                 regex=False)
                 df_final = df_final.fillna('')
 
                 imported_count = 0
                 c = conn.cursor()
                 for _, row in df_final.iterrows():
                     if not row.get('kampnr'): continue
-
                     c.execute("SELECT kampnr FROM kamper WHERE kampnr=?", (row['kampnr'],))
-                    exists = c.fetchone()
-
-                    if exists:
-                        c.execute('''
-                                  UPDATE kamper
-                                  SET runde=?,
-                                      dato=?,
-                                      tid=?,
-                                      hjemmelag=?,
-                                      bortelag=?,
-                                      bane=?,
-                                      arrangor=?,
-                                      turnering=?
-                                  WHERE kampnr = ?
-                                  ''', (row.get('runde'), row.get('dato'), row.get('tid'), row.get('hjemmelag'),
-                                        row.get('bortelag'), row.get('bane'), row.get('arrangor'), row.get('turnering'),
-                                        row['kampnr']))
+                    if c.fetchone():
+                        c.execute('''UPDATE kamper
+                                     SET runde=?,
+                                         dato=?,
+                                         tid=?,
+                                         hjemmelag=?,
+                                         bortelag=?,
+                                         bane=?,
+                                         arrangor=?,
+                                         turnering=?
+                                     WHERE kampnr = ?''',
+                                  (row.get('runde'), row.get('dato'), row.get('tid'), row.get('hjemmelag'),
+                                   row.get('bortelag'), row.get('bane'), row.get('arrangor'), row.get('turnering'),
+                                   row['kampnr']))
                     else:
-                        c.execute('''
-                                  INSERT INTO kamper (kampnr, runde, dato, tid, hjemmelag, bortelag, bane, arrangor,
-                                                      dommer_1, dommer_2, observator, turnering)
-                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                  ''', (row['kampnr'], row.get('runde'), row.get('dato'), row.get('tid'),
-                                        row.get('hjemmelag'),
-                                        row.get('bortelag'), row.get('bane'), row.get('arrangor'), row.get('dommer_1'),
-                                        row.get('dommer_2'), row.get('observator'), row.get('turnering')))
+                        c.execute('''INSERT INTO kamper (kampnr, runde, dato, tid, hjemmelag, bortelag, bane, arrangor,
+                                                         dommer_1, dommer_2, observator, turnering)
+                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                  (row['kampnr'], row.get('runde'), row.get('dato'), row.get('tid'),
+                                   row.get('hjemmelag'), row.get('bortelag'), row.get('bane'), row.get('arrangor'),
+                                   row.get('dommer_1'), row.get('dommer_2'), row.get('observator'),
+                                   row.get('turnering')))
                     imported_count += 1
-
                 conn.commit()
                 df_all = load_data(conn)
                 st.success(f"Suksess! Synkroniserte {imported_count} kamper fra regnearket.")
             except Exception as e:
                 st.error(f"Feil ved import: {e}")
+
+    # --- IMPORT FRA EXCEL (DOMMERE) ---
+    with st.expander("Importér Dommerregister fra Excel"):
+        st.markdown(
+            "Last opp filen `dommere.xlsx` for å oppdatere databasen (gjør dette siden filen ikke lenger ligger åpent på GitHub).")
+        uploaded_dommere = st.file_uploader("Last opp Dommere (Excel)", type=["xlsx", "xls"])
+        if uploaded_dommere and st.button("Importér Dommere", type="primary"):
+            try:
+                # Lagre midlertidig for funksjonen vår, slett deretter umiddelbart for sikkerhet
+                temp_filename = "temp_dommere_upload.xlsx"
+                with open(temp_filename, "wb") as f:
+                    f.write(uploaded_dommere.getbuffer())
+
+                sync_referees_to_db(df_all, conn, temp_filename)
+                os.remove(temp_filename)
+
+                st.success("Suksess! Dommerregisteret ble oppdatert og lest trygt inn i databasen.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Feil ved import av dommere: {e}")
 
     # --- ADMINISTRER DOMMERE ---
     st.divider()
@@ -450,9 +433,7 @@ if user_role == "admin":
         df_dommere_status['aktiv'] = df_dommere_status['aktiv'].astype(bool)
 
         edited_dommere = st.data_editor(
-            df_dommere_status,
-            hide_index=True,
-            use_container_width=True,
+            df_dommere_status, hide_index=True, use_container_width=True,
             column_config={
                 "navn": st.column_config.TextColumn("Dommernavn", disabled=True),
                 "type_dommer": st.column_config.TextColumn("Type / Nivå", disabled=True),
@@ -470,8 +451,6 @@ if user_role == "admin":
     st.divider()
     st.subheader("Register for Dommerkontakter")
     with st.expander("Knytt kontakter til lag"):
-        st.markdown("Opprett en kontaktperson og velg hvilke(t) lag de har ansvaret for.")
-
         with st.form("kontakt_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
             with col1:
@@ -485,27 +464,32 @@ if user_role == "admin":
                 if ny_navn and valgte_lag:
                     lag_str = ", ".join(valgte_lag)
                     c = conn.cursor()
-                    c.execute('''
-                              INSERT INTO dommer_ansvar (navn, epost, telefon, lag_liste)
-                              VALUES (?, ?, ?, ?) ON CONFLICT(navn) DO
-                              UPDATE SET epost=excluded.epost, telefon=excluded.telefon, lag_liste=excluded.lag_liste
-                              ''', (ny_navn, ny_epost, ny_tlf, lag_str))
+                    c.execute('''INSERT INTO dommer_ansvar (navn, epost, telefon, lag_liste)
+                                 VALUES (?, ?, ?, ?) ON CONFLICT(navn) DO
+                                 UPDATE
+                                 SET epost=excluded.epost, telefon=excluded.telefon, lag_liste=excluded.lag_liste''',
+                              (ny_navn, ny_epost, ny_tlf, lag_str))
                     conn.commit()
                     st.success(f"Lagret ansvar for {ny_navn}!")
+
+                    if ny_epost:
+                        with st.spinner("Sender velkomst-epost..."):
+                            if "email" in st.secrets:
+                                epost_ok = send_velkomst_epost(ny_epost, ny_navn, lag_str)
+                                if epost_ok:
+                                    st.success("Velkomst-epost sendt til kontakten!")
+                                else:
+                                    st.warning("Kontakt lagret, men feil ved sending av e-post.")
+                            else:
+                                st.warning("Kontakt lagret! (Streamlit Secrets mangler for å kunne sende e-post).")
                     st.rerun()
                 else:
                     st.warning("Navn og minst ett lag må fylles ut.")
 
         if not df_ansvarlige.empty:
             st.markdown("**Eksisterende kontakter (Du kan redigere direkte i tabellen):**")
-            edited_kontakter = st.data_editor(
-                df_ansvarlige,
-                hide_index=True,
-                use_container_width=True,
-                column_config={
-                    "lag_liste": st.column_config.TextColumn("Ansvarlige lag (Kommaseparert)")
-                }
-            )
+            edited_kontakter = st.data_editor(df_ansvarlige, hide_index=True, use_container_width=True, column_config={
+                "lag_liste": st.column_config.TextColumn("Ansvarlige lag (Kommaseparert)")})
             if st.button("Oppdater Endringer i Kontaktliste", type="secondary"):
                 c = conn.cursor()
                 c.execute("DELETE FROM dommer_ansvar")
@@ -524,26 +508,19 @@ if user_role == "admin":
 else:
     st.subheader(f"Beramming av dommere for {st.session_state.user_name}")
     user_teams = st.session_state.user_teams
-    # Filtrer kun kamper der ett av kontaktens lag er involvert
     view_df = df_all[(df_all['hjemmelag'].isin(user_teams)) | (df_all['arrangor'].isin(user_teams))]
 
 if not view_df.empty:
     st.markdown(
         "Her fyller du inn dommere. Tips: Du kan **sortere kolonnene** ved å klikke på overskriftene (f.eks. Dato eller Tid).")
-
     aktiv_dommer_liste = get_active_referees_list(conn)
-
     filter_options = ["Alle"] + sorted(view_df['dato'].dropna().unique().tolist())
     filter_date = st.selectbox("Filtrer på dato:", filter_options)
-
     display_df = view_df if filter_date == "Alle" else view_df[view_df['dato'] == filter_date]
 
     edited_df = st.data_editor(
-        display_df,
-        num_rows="dynamic" if user_role == "admin" else "fixed",
-        use_container_width=True,
-        disabled=["kampnr", "runde", "dato", "hjemmelag", "bortelag", "turnering", "arrangor"],
-        hide_index=True,
+        display_df, num_rows="dynamic" if user_role == "admin" else "fixed", use_container_width=True,
+        disabled=["kampnr", "runde", "dato", "hjemmelag", "bortelag", "turnering", "arrangor"], hide_index=True,
         column_config={
             "dommer_1": st.column_config.SelectboxColumn("Dommer 1", options=aktiv_dommer_liste),
             "dommer_2": st.column_config.SelectboxColumn("Dommer 2", options=aktiv_dommer_liste),
@@ -552,20 +529,17 @@ if not view_df.empty:
     )
 
     col_save, col_export = st.columns([1, 3])
-
     with col_save:
         if st.button("Lagre Beramming", type="primary"):
             c = conn.cursor()
             for _, row in edited_df.iterrows():
-                c.execute('''
-                          UPDATE kamper
-                          SET dommer_1=?,
-                              dommer_2=?,
-                              observator=?,
-                              bane=?,
-                              tid=?
-                          WHERE kampnr = ?
-                          ''',
+                c.execute('''UPDATE kamper
+                             SET dommer_1=?,
+                                 dommer_2=?,
+                                 observator=?,
+                                 bane=?,
+                                 tid=?
+                             WHERE kampnr = ?''',
                           (str(row.get('dommer_1', '')), str(row.get('dommer_2', '')), str(row.get('observator', '')),
                            str(row.get('bane', '')), str(row.get('tid', '')), str(row['kampnr'])))
             conn.commit()
@@ -576,14 +550,10 @@ if not view_df.empty:
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 df_all.to_excel(writer, index=False, sheet_name='Kamper')
-
-            st.download_button(
-                label="⬇️ Eksporter hele databasen til Excel",
-                data=buffer.getvalue(),
-                file_name=f"dommeroppsett_eksport_{date.today().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="secondary"
-            )
+            st.download_button(label="⬇️ Eksporter hele databasen til Excel", data=buffer.getvalue(),
+                               file_name=f"dommeroppsett_eksport_{date.today().strftime('%Y%m%d')}.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               type="secondary")
 else:
     if user_role == "admin":
         st.info("Databasen er tom. Gå til import-seksjonen øverst for å starte.")
@@ -607,20 +577,13 @@ if not view_df.empty:
         with st.spinner("Lager PDF..."):
             pdf_data_source = view_df if pdf_filter == "Alle dine viste kamper" else view_df[
                 view_df['dato'] == pdf_filter]
-
             pdf_bytes = generate_schedule_pdf(pdf_data_source, title=pdf_title)
-
             os.makedirs("output", exist_ok=True)
             safe_title = pdf_title.replace(" ", "_")
             file_path = os.path.join("output", f"{safe_title}_{date.today().strftime('%Y%m%d')}.pdf")
             with open(file_path, "wb") as f: f.write(pdf_bytes)
 
             b64 = base64.b64encode(pdf_bytes).decode()
-            button_html = f'''
-            <a href="data:application/octet-stream;base64,{b64}" download="{os.path.basename(file_path)}" style="text-decoration: none;">
-                <button style="border: 2px solid #1f1f1f; color: #1f1f1f; border-radius: 8px; background-color: white; font-family: 'Arial', sans-serif; font-weight: bold; padding: 0.5rem 1rem; cursor: pointer; transition: all 0.2s ease;">
-                    ⬇️ Last ned PDF
-                </button>
-            </a>
-            '''
-            st.markdown(button_html, unsafe_allow_html=True)
+            st.markdown(
+                f'''<a href="data:application/octet-stream;base64,{b64}" download="{os.path.basename(file_path)}" style="text-decoration: none;"><button style="border: 2px solid #1f1f1f; color: #1f1f1f; border-radius: 8px; background-color: white; font-family: 'Arial', sans-serif; font-weight: bold; padding: 0.5rem 1rem; cursor: pointer; transition: all 0.2s ease;">⬇️ Last ned PDF</button></a>''',
+                unsafe_allow_html=True)
