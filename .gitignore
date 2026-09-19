@@ -3,4 +3,4 @@
 *.db
 *.sqlite
 __pycache__/
-.env
+.envvenv/
