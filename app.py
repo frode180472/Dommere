@@ -399,6 +399,7 @@ if user_role == "admin":
                 if 'dato' in df_final.columns: df_final['dato'] = pd.to_datetime(df_final['dato'], errors='coerce').dt.strftime('%Y-%m-%d')
                 if 'tid' in df_final.columns: df_final['tid'] = df_final['tid'].astype(str).str[:5]
                 if 'kampnr' in df_final.columns: df_final['kampnr'] = df_final['kampnr'].astype(str).str.replace(".0", "", regex=False)
+                if 'turnering' in df_final.columns: df_final['turnering'] = df_final['turnering'].astype(str).apply(lambda x: x.split(',')[0].strip())
                 df_final = df_final.fillna('')
 
                 imported_count = 0
