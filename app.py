@@ -2,7 +2,7 @@ import os
 import io
 import re
 import math
-import sqlite3
+import psycopg2
 import pandas as pd
 import streamlit as st
 import base64
@@ -34,6 +34,7 @@ ADMIN_PASSORD = "admin123"
 LAGLEDER_PASSORD = "dommer123"
 DOMMER_PASSORD = "fløyte"
 
+
 # ==========================================
 # 2. STYLING (MODERNE DESIGN)
 # ==========================================
@@ -54,32 +55,85 @@ def inject_custom_css():
     </style>
     ''', unsafe_allow_html=True)
 
+
 # ==========================================
 # 3. DATABASE SETUP & HJELPEFUNKSJONER
 # ==========================================
-def get_db_connection():
-    conn = sqlite3.connect('kamper.db', check_same_thread=False)
+@st.cache_resource(ttl=600)
+def init_connection():
+    conn = psycopg2.connect(st.secrets["supabase"]["db_url"])
+    conn.autocommit = True
     return conn
+
+
+def get_db_connection():
+    conn = init_connection()
+    if conn.closed != 0:
+        st.cache_resource.clear()
+        conn = init_connection()
+    return conn
+
+
+def execute_query_to_df(query, conn, params=None):
+    c = conn.cursor()
+    c.execute(query, params)
+    cols = [desc[0] for desc in c.description]
+    return pd.DataFrame(c.fetchall(), columns=cols)
+
 
 def init_db(conn):
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS kamper (kampnr TEXT PRIMARY KEY, runde TEXT, dato TEXT, tid TEXT, hjemmelag TEXT, bortelag TEXT, bane TEXT, arrangor TEXT, dommer_1 TEXT, dommer_2 TEXT, observator TEXT, turnering TEXT, laast BOOLEAN DEFAULT 0, status TEXT DEFAULT '')''')
-    c.execute('''CREATE TABLE IF NOT EXISTS dommer_status (navn TEXT PRIMARY KEY, aktiv BOOLEAN, type_dommer TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS dommer_ansvar (navn TEXT PRIMARY KEY, epost TEXT, telefon TEXT, lag_liste TEXT, selvbetjening BOOLEAN DEFAULT 1)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS dommer_onsker (kampnr TEXT, dommer_navn TEXT, UNIQUE(kampnr, dommer_navn))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS godkjente_opprykk (dommer_navn TEXT PRIMARY KEY)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS kamper
+                 (
+                     kampnr     TEXT PRIMARY KEY,
+                     runde      TEXT,
+                     dato       TEXT,
+                     tid        TEXT,
+                     hjemmelag  TEXT,
+                     bortelag   TEXT,
+                     bane       TEXT,
+                     arrangor   TEXT,
+                     dommer_1   TEXT,
+                     dommer_2   TEXT,
+                     observator TEXT,
+                     turnering  TEXT,
+                     laast      BOOLEAN DEFAULT FALSE,
+                     status     TEXT    DEFAULT ''
+                 )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS dommer_status
+                 (
+                     navn        TEXT PRIMARY KEY,
+                     aktiv       BOOLEAN,
+                     type_dommer TEXT
+                 )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS dommer_ansvar
+                 (
+                     navn          TEXT PRIMARY KEY,
+                     epost         TEXT,
+                     telefon       TEXT,
+                     lag_liste     TEXT,
+                     selvbetjening BOOLEAN DEFAULT TRUE
+                 )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS dommer_onsker
+                 (
+                     kampnr      TEXT,
+                     dommer_navn TEXT,
+                     UNIQUE (kampnr, dommer_navn)
+                 )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS godkjente_opprykk
+                 (
+                     dommer_navn TEXT PRIMARY KEY
+                 )''')
 
-    try: c.execute("ALTER TABLE dommer_ansvar ADD COLUMN selvbetjening BOOLEAN DEFAULT 1")
-    except sqlite3.OperationalError: pass
-    try: c.execute("ALTER TABLE kamper ADD COLUMN laast BOOLEAN DEFAULT 0")
-    except sqlite3.OperationalError: pass
-    try: c.execute("ALTER TABLE kamper ADD COLUMN status TEXT DEFAULT ''")
-    except sqlite3.OperationalError: pass
+    # Legger til nye kolonner hvis de ikke finnes (støttet i Postgres)
+    c.execute("ALTER TABLE dommer_ansvar ADD COLUMN IF NOT EXISTS selvbetjening BOOLEAN DEFAULT TRUE")
+    c.execute("ALTER TABLE kamper ADD COLUMN IF NOT EXISTS laast BOOLEAN DEFAULT FALSE")
+    c.execute("ALTER TABLE kamper ADD COLUMN IF NOT EXISTS status TEXT DEFAULT ''")
 
-    conn.commit()
 
 def load_data(conn):
-    return pd.read_sql_query("SELECT * FROM kamper", conn)
+    return execute_query_to_df("SELECT * FROM kamper", conn)
+
 
 def sync_referees_to_db(db_df, conn, filepath='dommere.xlsx'):
     dommer_info = {}
@@ -87,7 +141,8 @@ def sync_referees_to_db(db_df, conn, filepath='dommere.xlsx'):
         try:
             df_dommere = pd.read_excel(filepath)
             if 'Fornavn' in df_dommere.columns and 'Etternavn' in df_dommere.columns:
-                df_dommere['Fullt Navn'] = df_dommere['Fornavn'].astype(str).str.strip() + " " + df_dommere['Etternavn'].astype(str).str.strip()
+                df_dommere['Fullt Navn'] = df_dommere['Fornavn'].astype(str).str.strip() + " " + df_dommere[
+                    'Etternavn'].astype(str).str.strip()
                 type_col = 'Dommer' if 'Dommer' in df_dommere.columns else None
                 for _, row in df_dommere.iterrows():
                     navn = str(row['Fullt Navn']).strip()
@@ -102,29 +157,37 @@ def sync_referees_to_db(db_df, conn, filepath='dommere.xlsx'):
             if col in db_df.columns:
                 for navn in db_df[col].dropna().tolist():
                     navn_clean = str(navn).strip()
-                    if navn_clean and navn_clean.lower() not in ['nan', 'none', 'nat'] and navn_clean not in dommer_info:
+                    if navn_clean and navn_clean.lower() not in ['nan', 'none',
+                                                                 'nat'] and navn_clean not in dommer_info:
                         dommer_info[navn_clean] = ""
     c = conn.cursor()
     for navn, dtype in dommer_info.items():
-        c.execute("INSERT OR IGNORE INTO dommer_status (navn, type_dommer, aktiv) VALUES (?, ?, 1)", (navn, dtype))
+        c.execute(
+            "INSERT INTO dommer_status (navn, type_dommer, aktiv) VALUES (%s, %s, TRUE) ON CONFLICT (navn) DO NOTHING",
+            (navn, dtype))
         if dtype:
-            c.execute("UPDATE dommer_status SET type_dommer=? WHERE navn=? AND (type_dommer IS NULL OR type_dommer='')", (dtype, navn))
-    conn.commit()
+            c.execute(
+                "UPDATE dommer_status SET type_dommer=%s WHERE navn=%s AND (type_dommer IS NULL OR type_dommer='')",
+                (dtype, navn))
+
 
 def get_active_referees_list(conn):
     c = conn.cursor()
-    c.execute("SELECT navn FROM dommer_status WHERE aktiv=1 ORDER BY navn")
+    c.execute("SELECT navn FROM dommer_status WHERE aktiv=TRUE ORDER BY navn")
     return [""] + [row[0] for row in c.fetchall()]
+
 
 def get_match_count(conn, dommer_navn):
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM kamper WHERE dommer_1=? OR dommer_2=?", (dommer_navn, dommer_navn))
+    c.execute("SELECT COUNT(*) FROM kamper WHERE dommer_1=%s OR dommer_2=%s", (dommer_navn, dommer_navn))
     return c.fetchone()[0]
+
 
 def get_age_from_turnering(turnering_str):
     match = re.search(r'(\d{1,2})', str(turnering_str))
     if match: return int(match.group(1))
     return None
+
 
 def get_allowed_ages(nivå, match_count, is_approved):
     nivå = str(nivå).strip()
@@ -135,6 +198,7 @@ def get_allowed_ages(nivå, match_count, is_approved):
     elif nivå == 'Nivå 7':
         return [12]
     return [9, 10, 11, 12]
+
 
 # ==========================================
 # 4. PDF GENERATOR & EPOST
@@ -176,6 +240,7 @@ def generate_schedule_pdf(df, title="Dommeroppsett"):
     </body></html>'''
     return HTML(string=html_template, base_url=os.path.abspath(os.getcwd())).write_pdf()
 
+
 def send_velkomst_epost(mottaker_epost, navn, lag_liste_str):
     try:
         smtp_server = st.secrets["email"]["smtp_server"]
@@ -199,8 +264,10 @@ def send_velkomst_epost(mottaker_epost, navn, lag_liste_str):
         server.send_message(msg)
         server.quit()
         return True
-    except Exception:
+    except Exception as e:
+        print(f"E-POST FEIL: {e}")
         return False
+
 
 # ==========================================
 # 5. STREAMLIT APP LOGIKK
@@ -219,7 +286,7 @@ if not df_all.empty:
     turneringer = df_all['turnering'].dropna().unique().tolist()
     turnering_liste = sorted(list(set(turneringer)))
 
-df_ansvarlige = pd.read_sql_query("SELECT * FROM dommer_ansvar ORDER BY navn", conn)
+df_ansvarlige = execute_query_to_df("SELECT * FROM dommer_ansvar ORDER BY navn", conn)
 ansvarlig_navn_liste = df_ansvarlige['navn'].tolist() if not df_ansvarlige.empty else []
 
 if 'logged_in' not in st.session_state:
@@ -307,13 +374,13 @@ if user_role == "none":
 # ==========================================
 if user_role == "dommer":
     c = conn.cursor()
-    c.execute("SELECT type_dommer FROM dommer_status WHERE navn=?", (st.session_state.user_name,))
+    c.execute("SELECT type_dommer FROM dommer_status WHERE navn=%s", (st.session_state.user_name,))
     nivaa_row = c.fetchone()
     nivaa = nivaa_row[0] if nivaa_row else "Ukjent"
 
     antall_kamper = get_match_count(conn, st.session_state.user_name)
 
-    c.execute("SELECT 1 FROM godkjente_opprykk WHERE dommer_navn=?", (st.session_state.user_name,))
+    c.execute("SELECT 1 FROM godkjente_opprykk WHERE dommer_navn=%s", (st.session_state.user_name,))
     er_godkjent = bool(c.fetchone())
 
     tillatte_aldre = get_allowed_ages(nivaa, antall_kamper, er_godkjent)
@@ -327,18 +394,25 @@ if user_role == "dommer":
             st.info("Du har passert 10 kamper og avventer godkjenning fra lagleder for å dømme 11-årskamper.")
 
     c.execute("""
-              SELECT k.kampnr, k.dato, k.tid, k.hjemmelag, k.bortelag, k.bane, k.turnering, k.arrangor
+              SELECT k.kampnr,
+                     k.dato,
+                     k.tid,
+                     k.hjemmelag,
+                     k.bortelag,
+                     k.bane,
+                     k.turnering,
+                     k.arrangor
               FROM kamper k
-              WHERE k.laast = 0 OR k.laast IS NULL
+              WHERE k.laast = FALSE
+                 OR k.laast IS NULL
               ORDER BY k.dato, k.tid
               """)
     alle_ulåste = c.fetchall()
 
-    c.execute("SELECT lag_liste FROM dommer_ansvar WHERE selvbetjening=1")
+    c.execute("SELECT lag_liste FROM dommer_ansvar WHERE selvbetjening=TRUE")
     selvbetjening_lag = []
     for row in c.fetchall():
         if row[0]:
-            # Fjerner ALT av mellomrom og spesialtegn, og gjør til små bokstaver
             selvbetjening_lag.extend([re.sub(r'\s+', '', str(l).lower()) for l in row[0].split("|")])
 
     tilgjengelige_kamper = []
@@ -353,14 +427,15 @@ if user_role == "dommer":
                                  columns=['kampnr', 'dato', 'tid', 'hjemmelag', 'bortelag', 'bane', 'turnering',
                                           'arrangor'])
 
-        c.execute("SELECT COUNT(*) FROM dommer_status WHERE type_dommer=? AND aktiv=1", (nivaa,))
+        c.execute("SELECT COUNT(*) FROM dommer_status WHERE type_dommer=%s AND aktiv=TRUE", (nivaa,))
         antall_dommere_samme_nivaa = c.fetchone()[0] or 1
         antall_plasser = len(tilgjengelige_kamper) * 2
         maks_kvote = max(2, math.ceil(antall_plasser / antall_dommere_samme_nivaa))
 
-        st.info(f"Basert på kapasitet og rettferdig fordeling kan du melde interesse på inntil **{maks_kvote}** av disse kampene.")
+        st.info(
+            f"Basert på kapasitet og rettferdig fordeling kan du melde interesse på inntil **{maks_kvote}** av disse kampene.")
 
-        c.execute("SELECT kampnr FROM dommer_onsker WHERE dommer_navn=?", (st.session_state.user_name,))
+        c.execute("SELECT kampnr FROM dommer_onsker WHERE dommer_navn=%s", (st.session_state.user_name,))
         mine_onsker = [row[0] for row in c.fetchall()]
         kamper_df['Ønsker å dømme'] = kamper_df['kampnr'].isin(mine_onsker)
 
@@ -374,15 +449,17 @@ if user_role == "dommer":
         if st.button("Lagre mine ønsker", type="primary"):
             valgte_kampnr = edited_onsker[edited_onsker['Ønsker å dømme'] == True]['kampnr'].tolist()
             if len(valgte_kampnr) > maks_kvote:
-                st.error(f"Du har valgt {len(valgte_kampnr)} kamper, men kvoten din er {maks_kvote}. Vennligst fjern noen ønsker før du lagrer.")
+                st.error(
+                    f"Du har valgt {len(valgte_kampnr)} kamper, men kvoten din er {maks_kvote}. Vennligst fjern noen ønsker før du lagrer.")
             else:
-                c.execute("DELETE FROM dommer_onsker WHERE dommer_navn=?", (st.session_state.user_name,))
+                c.execute("DELETE FROM dommer_onsker WHERE dommer_navn=%s", (st.session_state.user_name,))
                 for knr in valgte_kampnr:
-                    c.execute("INSERT INTO dommer_onsker (kampnr, dommer_navn) VALUES (?, ?)", (knr, st.session_state.user_name))
-                conn.commit()
+                    c.execute("INSERT INTO dommer_onsker (kampnr, dommer_navn) VALUES (%s, %s)",
+                              (knr, st.session_state.user_name))
                 st.success("Dine ønsker er lagret!")
     else:
-        st.info("Det er for øyeblikket ingen ledige kamper som passer ditt nivå (eller årskullene har stengt for selvbetjening).")
+        st.info(
+            "Det er for øyeblikket ingen ledige kamper som passer ditt nivå (eller årskullene har stengt for selvbetjening).")
     st.stop()
 
 # ==========================================
@@ -393,13 +470,24 @@ if user_role == "admin":
         uploaded_file = st.file_uploader("Last opp Kamper (Excel)", type=["xlsx", "xls", "csv"])
         if uploaded_file and st.button("Importér Kamper", type="primary"):
             try:
-                df_import = pd.read_csv(uploaded_file, sep=None, engine='python') if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-                rename_dict = {col: db_col for col in df_import.columns for db_col, aliases in EXCEL_ALIASES.items() if str(col).strip().lower() in [a.lower() for a in aliases]}
-                df_final = df_import.rename(columns=rename_dict)[[col for col in df_import.rename(columns=rename_dict).columns if col in EXCEL_ALIASES.keys()]]
-                if 'dato' in df_final.columns: df_final['dato'] = pd.to_datetime(df_final['dato'], errors='coerce').dt.strftime('%Y-%m-%d')
+                df_import = pd.read_csv(uploaded_file, sep=None, engine='python') if uploaded_file.name.endswith(
+                    '.csv') else pd.read_excel(uploaded_file)
+                rename_dict = {col: db_col for col in df_import.columns for db_col, aliases in EXCEL_ALIASES.items() if
+                               str(col).strip().lower() in [a.lower() for a in aliases]}
+                df_final = df_import.rename(columns=rename_dict)[
+                    [col for col in df_import.rename(columns=rename_dict).columns if col in EXCEL_ALIASES.keys()]]
+                if 'dato' in df_final.columns: df_final['dato'] = pd.to_datetime(df_final['dato'],
+                                                                                 errors='coerce').dt.strftime(
+                    '%Y-%m-%d')
                 if 'tid' in df_final.columns: df_final['tid'] = df_final['tid'].astype(str).str[:5]
-                if 'kampnr' in df_final.columns: df_final['kampnr'] = df_final['kampnr'].astype(str).str.replace(".0", "", regex=False)
-                if 'turnering' in df_final.columns: df_final['turnering'] = df_final['turnering'].astype(str).apply(lambda x: x.split(',')[0].strip())
+                if 'kampnr' in df_final.columns: df_final['kampnr'] = df_final['kampnr'].astype(str).str.replace(".0",
+                                                                                                                 "",
+                                                                                                                 regex=False)
+
+                # Klipper bort alt etter første komma
+                if 'turnering' in df_final.columns: df_final['turnering'] = df_final['turnering'].astype(str).apply(
+                    lambda x: x.split(',')[0].strip())
+
                 df_final = df_final.fillna('')
 
                 imported_count = 0
@@ -407,7 +495,7 @@ if user_role == "admin":
                 for _, row in df_final.iterrows():
                     if not row.get('kampnr'): continue
 
-                    c.execute("SELECT dato, tid, bane, status FROM kamper WHERE kampnr=?", (row['kampnr'],))
+                    c.execute("SELECT dato, tid, bane, status FROM kamper WHERE kampnr=%s", (row['kampnr'],))
                     eksisterende = c.fetchone()
 
                     if eksisterende:
@@ -417,13 +505,29 @@ if user_role == "admin":
                         if ex_dato != ny_dato or ex_tid != ny_tid or ex_bane != ny_bane:
                             ny_status = "🔄 Endret"
 
-                        c.execute('''UPDATE kamper SET runde=?, dato=?, tid=?, hjemmelag=?, bortelag=?, bane=?, arrangor=?, turnering=?, status=? WHERE kampnr = ?''',
-                                  (row.get('runde'), ny_dato, ny_tid, row.get('hjemmelag'), row.get('bortelag'), ny_bane, row.get('arrangor'), row.get('turnering'), ny_status, row['kampnr']))
+                        c.execute('''UPDATE kamper
+                                     SET runde=%s,
+                                         dato=%s,
+                                         tid=%s,
+                                         hjemmelag=%s,
+                                         bortelag=%s,
+                                         bane=%s,
+                                         arrangor=%s,
+                                         turnering=%s,
+                                         status=%s
+                                     WHERE kampnr = %s''',
+                                  (row.get('runde'), ny_dato, ny_tid, row.get('hjemmelag'), row.get('bortelag'),
+                                   ny_bane, row.get('arrangor'), row.get('turnering'), ny_status, row['kampnr']))
                     else:
-                        c.execute('''INSERT INTO kamper (kampnr, runde, dato, tid, hjemmelag, bortelag, bane, arrangor, dommer_1, dommer_2, observator, turnering, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                                  (row['kampnr'], row.get('runde'), row.get('dato'), row.get('tid'), row.get('hjemmelag'), row.get('bortelag'), row.get('bane'), row.get('arrangor'), row.get('dommer_1'), row.get('dommer_2'), row.get('observator'), row.get('turnering'), '🆕 Ny'))
+                        c.execute('''INSERT INTO kamper (kampnr, runde, dato, tid, hjemmelag, bortelag, bane, arrangor,
+                                                         dommer_1, dommer_2, observator, turnering, status)
+                                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
+                                  (row['kampnr'], row.get('runde'), row.get('dato'), row.get('tid'),
+                                   row.get('hjemmelag'), row.get('bortelag'), row.get('bane'), row.get('arrangor'),
+                                   row.get('dommer_1'), row.get('dommer_2'), row.get('observator'),
+                                   row.get('turnering'), '🆕 Ny'))
                     imported_count += 1
-                conn.commit()
+
                 df_all = load_data(conn)
                 st.success(f"Suksess! Synkroniserte {imported_count} kamper.")
             except Exception as e:
@@ -446,16 +550,17 @@ if user_role == "admin":
     st.divider()
     st.subheader("Administrer Dommere")
     with st.expander("Aktiver / Deaktiver Dommere"):
-        df_dommere_status = pd.read_sql_query("SELECT * FROM dommer_status ORDER BY navn", conn)
+        df_dommere_status = execute_query_to_df("SELECT * FROM dommer_status ORDER BY navn", conn)
         df_dommere_status['aktiv'] = df_dommere_status['aktiv'].astype(bool)
         edited_dommere = st.data_editor(df_dommere_status, hide_index=True, use_container_width=True,
                                         column_config={"navn": st.column_config.TextColumn("Dommernavn", disabled=True),
-                                                       "type_dommer": st.column_config.TextColumn("Type / Nivå", disabled=True),
+                                                       "type_dommer": st.column_config.TextColumn("Type / Nivå",
+                                                                                                  disabled=True),
                                                        "aktiv": st.column_config.CheckboxColumn("Aktiv", default=True)})
         if st.button("Lagre Dommerstatus", type="secondary"):
             c = conn.cursor()
-            for _, row in edited_dommere.iterrows(): c.execute("UPDATE dommer_status SET aktiv=? WHERE navn=?", (int(row['aktiv']), row['navn']))
-            conn.commit()
+            for _, row in edited_dommere.iterrows(): c.execute("UPDATE dommer_status SET aktiv=%s WHERE navn=%s",
+                                                               (bool(row['aktiv']), row['navn']))
             st.success("Dommerstatus oppdatert!")
 
     st.divider()
@@ -476,19 +581,30 @@ if user_role == "admin":
             ny_tlf = col2.text_input("Telefon (La stå tom for å beholde eksisterende)")
             valgte_lag = col2.multiselect("Velg årskull/turnering de har ansvar for:", turnering_liste)
 
+            send_epost = st.checkbox("Send velkomst-epost med innlogging ved lagring")
+
             if st.form_submit_button("Lagre Kontakt"):
                 if ny_navn and valgte_lag:
                     c = conn.cursor()
                     lag_str = "|".join(valgte_lag)
 
                     if valgt_handling == "-- Opprett ny kontakt --":
-                        c.execute('''INSERT INTO dommer_ansvar (navn, epost, telefon, lag_liste) VALUES (?, ?, ?, ?)''', (ny_navn, ny_epost, ny_tlf, lag_str))
+                        c.execute('''INSERT INTO dommer_ansvar (navn, epost, telefon, lag_liste)
+                                     VALUES (%s, %s, %s, %s)''', (ny_navn, ny_epost, ny_tlf, lag_str))
+                        epost_som_brukes = ny_epost
                     else:
-                        ny_epost_val = ny_epost if ny_epost else df_ansvarlige[df_ansvarlige['navn'] == ny_navn]['epost'].values[0]
+                        epost_som_brukes = ny_epost if ny_epost else df_ansvarlige[df_ansvarlige['navn'] == ny_navn]['epost'].values[0]
                         ny_tlf_val = ny_tlf if ny_tlf else df_ansvarlige[df_ansvarlige['navn'] == ny_navn]['telefon'].values[0]
-                        c.execute('''UPDATE dommer_ansvar SET epost=?, telefon=?, lag_liste=? WHERE navn = ?''', (ny_epost_val, ny_tlf_val, lag_str, ny_navn))
+                        c.execute('''UPDATE dommer_ansvar
+                                     SET epost=%s,telefon=%s,lag_liste=%s
+                                     WHERE navn = %s''', (epost_som_brukes, ny_tlf_val, lag_str, ny_navn))
 
-                    conn.commit()
+                    if send_epost and epost_som_brukes:
+                        if send_velkomst_epost(epost_som_brukes, ny_navn, ", ".join(valgte_lag)):
+                            st.toast("Velkomst-epost sendt!", icon="📧")
+                        else:
+                            st.warning("Klarte ikke å sende e-post. Sjekk secrets.toml.")
+
                     st.success(f"Oppdatert ansvar for {ny_navn}!")
                     st.rerun()
                 else:
@@ -497,12 +613,13 @@ if user_role == "admin":
         if not df_ansvarlige.empty:
             st.markdown("**Oversikt over eksisterende kontakter:**")
             st.info("Bruk nedtrekksmenyen over for å redigere årskullene, så formatet lagres riktig.")
-            edited_kontakter = st.data_editor(df_ansvarlige.drop(columns=['selvbetjening'], errors='ignore'), hide_index=True, use_container_width=True, disabled=["lag_liste"])
+            edited_kontakter = st.data_editor(df_ansvarlige.drop(columns=['selvbetjening'], errors='ignore'),
+                                              hide_index=True, use_container_width=True, disabled=["lag_liste"])
             if st.button("Oppdater endringer gjort i tabellen", type="secondary"):
                 c = conn.cursor()
                 for _, row in edited_kontakter.iterrows():
-                    c.execute("UPDATE dommer_ansvar SET epost=?, telefon=? WHERE navn=?", (row['epost'], row['telefon'], row['navn']))
-                conn.commit()
+                    c.execute("UPDATE dommer_ansvar SET epost=%s, telefon=%s WHERE navn=%s",
+                              (row['epost'], row['telefon'], row['navn']))
                 st.success("Kontaktliste oppdatert.")
                 st.rerun()
 
@@ -516,19 +633,20 @@ if user_role == "lagleder":
     st.subheader(f"Lagleder Dashboard: {st.session_state.user_name}")
 
     # 1. SELVBETJENING TOGGLE
-    c.execute("SELECT selvbetjening FROM dommer_ansvar WHERE navn=?", (st.session_state.user_name,))
+    c.execute("SELECT selvbetjening FROM dommer_ansvar WHERE navn=%s", (st.session_state.user_name,))
     sb_status = c.fetchone()
     current_sb = bool(sb_status[0]) if sb_status else True
     ny_sb = st.toggle("La dommere melde interesse for mine kamper selv (Selvbetjening)", value=current_sb)
     if ny_sb != current_sb:
-        c.execute("UPDATE dommer_ansvar SET selvbetjening=? WHERE navn=?", (int(ny_sb), st.session_state.user_name))
-        conn.commit()
+        c.execute("UPDATE dommer_ansvar SET selvbetjening=%s WHERE navn=%s", (bool(ny_sb), st.session_state.user_name))
         st.success("Selvbetjeningsstatus oppdatert!")
 
     # 2. GODKJENNING AV NIVÅ 11
     c.execute("""
-              SELECT ds.navn FROM dommer_status ds
-              WHERE ds.type_dommer = 'Nivå 11' AND ds.navn NOT IN (SELECT dommer_navn FROM godkjente_opprykk)
+              SELECT ds.navn
+              FROM dommer_status ds
+              WHERE ds.type_dommer = 'Nivå 11'
+                AND ds.navn NOT IN (SELECT dommer_navn FROM godkjente_opprykk)
               """)
     potensielle_opprykk = c.fetchall()
     kandidater_til_godkjenning = [row[0] for row in potensielle_opprykk if get_match_count(conn, row[0]) >= 10]
@@ -537,8 +655,7 @@ if user_role == "lagleder":
         st.warning("🔔 Følgende Nivå 11-dommere har dømt 10+ kamper og avventer godkjenning for 11-årskamper:")
         for kand in kandidater_til_godkjenning:
             if st.button(f"Godkjenn {kand} for 11-årskamper", key=kand):
-                c.execute("INSERT INTO godkjente_opprykk (dommer_navn) VALUES (?)", (kand,))
-                conn.commit()
+                c.execute("INSERT INTO godkjente_opprykk (dommer_navn) VALUES (%s)", (kand,))
                 st.success(f"{kand} er nå godkjent!")
                 st.rerun()
     st.divider()
@@ -548,7 +665,6 @@ if user_role == "admin":
     view_df = df_all.copy()
 else:
     st.subheader("Mine kamper")
-    # Knuser teksten i minnet og i Excel-filen for å tvinge frem en 100% sikker match
     renset_ansvar = [re.sub(r'\s+', '', str(t).lower()) for t in st.session_state.user_teams]
     mask = df_all['turnering'].apply(lambda x: re.sub(r'\s+', '', str(x).lower()) in renset_ansvar)
     view_df = df_all[mask].copy()
@@ -556,11 +672,18 @@ else:
 if not view_df.empty:
     with st.expander("📊 Vis dommerstatistikk (Antall tildelte kamper)"):
         c.execute("""
-                  SELECT dommer, COUNT(*) as antall FROM (
-                      SELECT dommer_1 as dommer FROM kamper WHERE dommer_1 != '' AND dommer_1 IS NOT NULL
-                      UNION ALL
-                      SELECT dommer_2 as dommer FROM kamper WHERE dommer_2 != '' AND dommer_2 IS NOT NULL
-                  ) GROUP BY dommer ORDER BY antall DESC
+                  SELECT dommer, COUNT(*) as antall
+                  FROM (SELECT dommer_1 as dommer
+                        FROM kamper
+                        WHERE dommer_1 != ''
+                          AND dommer_1 IS NOT NULL
+                        UNION ALL
+                        SELECT dommer_2 as dommer
+                        FROM kamper
+                        WHERE dommer_2 != ''
+                          AND dommer_2 IS NOT NULL) as subquery
+                  GROUP BY dommer
+                  ORDER BY antall DESC
                   """)
         stats = c.fetchall()
         if stats:
@@ -594,7 +717,8 @@ if not view_df.empty:
     st.markdown("Fyll inn dommere. **Huk av for 'Låst (TA)'** når kampen er ferdig berammet i MinIdrett.")
     edited_df = st.data_editor(
         display_df, num_rows="dynamic" if user_role == "admin" else "fixed", use_container_width=True,
-        disabled=["kampnr", "runde", "dato", "hjemmelag", "bortelag", "turnering", "arrangor", "Interesserte dommere", "status"], hide_index=True,
+        disabled=["kampnr", "runde", "dato", "hjemmelag", "bortelag", "turnering", "arrangor", "Interesserte dommere",
+                  "status"], hide_index=True,
         column_config={
             "dommer_1": st.column_config.SelectboxColumn("Dommer 1", options=aktiv_dommer_liste),
             "dommer_2": st.column_config.SelectboxColumn("Dommer 2", options=aktiv_dommer_liste),
@@ -609,26 +733,34 @@ if not view_df.empty:
     with col_save:
         if st.button("Lagre Beramming", type="primary"):
             for _, row in edited_df.iterrows():
-                c.execute('''UPDATE kamper SET dommer_1=?, dommer_2=?, observator=?, bane=?, tid=?, laast=? WHERE kampnr = ?''',
+                c.execute('''UPDATE kamper
+                             SET dommer_1=%s,
+                                 dommer_2=%s,
+                                 observator=%s,
+                                 bane=%s,
+                                 tid=%s,
+                                 laast=%s
+                             WHERE kampnr = %s''',
                           (str(row.get('dommer_1', '')), str(row.get('dommer_2', '')), str(row.get('observator', '')),
-                           str(row.get('bane', '')), str(row.get('tid', '')), int(row.get('laast', False)), str(row['kampnr'])))
-            conn.commit()
+                           str(row.get('bane', '')), str(row.get('tid', '')), bool(row.get('laast', False)),
+                           str(row['kampnr'])))
             st.success("Oppdatert!")
 
     with col_clear:
         if st.button("Fjern 'Ny/Endret'-varsler", type="secondary"):
             for kampnr in view_df['kampnr']:
-                c.execute("UPDATE kamper SET status='' WHERE kampnr=?", (kampnr,))
-            conn.commit()
+                c.execute("UPDATE kamper SET status='' WHERE kampnr=%s", (kampnr,))
             st.rerun()
 
     with col_export:
         if user_role == "admin":
             buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer: df_all.to_excel(writer, index=False, sheet_name='Kamper')
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer: df_all.to_excel(writer, index=False,
+                                                                                      sheet_name='Kamper')
             st.download_button(label="⬇️ Eksporter hele databasen til Excel", data=buffer.getvalue(),
                                file_name=f"dommeroppsett_eksport_{date.today().strftime('%Y%m%d')}.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="secondary")
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               type="secondary")
 else:
     st.info("Fant ingen kamper.")
 
@@ -645,10 +777,13 @@ if not view_df.empty:
 
     if st.button("Generer PDF"):
         with st.spinner("Lager PDF..."):
-            pdf_data_source = view_df if pdf_filter == "Alle dine viste kamper" else view_df[view_df['dato'] == pdf_filter]
+            pdf_data_source = view_df if pdf_filter == "Alle dine viste kamper" else view_df[
+                view_df['dato'] == pdf_filter]
             pdf_bytes = generate_schedule_pdf(pdf_data_source, title=pdf_title)
             os.makedirs("output", exist_ok=True)
             file_path = os.path.join("output", f"oppsett_{date.today().strftime('%Y%m%d')}.pdf")
             with open(file_path, "wb") as f: f.write(pdf_bytes)
             b64 = base64.b64encode(pdf_bytes).decode()
-            st.markdown(f'''<a href="data:application/octet-stream;base64,{b64}" download="{os.path.basename(file_path)}" style="text-decoration: none;"><button style="border: 2px solid #1f1f1f; color: #1f1f1f; border-radius: 8px; background-color: white; font-family: 'Arial', sans-serif; font-weight: bold; padding: 0.5rem 1rem; cursor: pointer; transition: all 0.2s ease;">⬇️ Last ned PDF</button></a>''', unsafe_allow_html=True)
+            st.markdown(
+                f'''<a href="data:application/octet-stream;base64,{b64}" download="{os.path.basename(file_path)}" style="text-decoration: none;"><button style="border: 2px solid #1f1f1f; color: #1f1f1f; border-radius: 8px; background-color: white; font-family: 'Arial', sans-serif; font-weight: bold; padding: 0.5rem 1rem; cursor: pointer; transition: all 0.2s ease;">⬇️ Last ned PDF</button></a>''',
+                unsafe_allow_html=True)
