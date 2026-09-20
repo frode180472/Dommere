@@ -36,22 +36,96 @@ DOMMER_PASSORD = "fløyte"
 
 
 # ==========================================
-# 2. STYLING (MODERNE DESIGN)
+# 2. STYLING (FREIDIG DESIGN)
 # ==========================================
 def inject_custom_css():
     st.markdown('''
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Play:wght@400;700&display=swap');
-        .stApp { background: linear-gradient(135deg, #fcfcfc 0%, #f0f0f0 100%); }
-        h1, h2, h3, h4, h5, h6, .st-emotion-cache-10trblm { color: #1f1f1f !important; font-family: 'Play', sans-serif; letter-spacing: -0.5px; }
-        .main-title { text-align: left; font-size: 3rem; font-weight: 800; background: -webkit-linear-gradient(45deg, #FF5800, #FF8C00); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 2rem; padding-top: 1rem; }
-        .st-emotion-cache-10trblm { border-bottom: 2px solid #eaeaea; padding-bottom: 10px; margin-bottom: 20px; }
-        .stButton > button[kind="primary"] { background: linear-gradient(90deg, #FF5800 0%, #FF8C00 100%); color: white; border: none; border-radius: 8px; box-shadow: 0 4px 8px rgba(255, 88, 0, 0.25); transition: all 0.3s ease; font-family: 'Arial', sans-serif; font-weight: bold; }
-        .stButton > button[kind="primary"]:hover { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(255, 88, 0, 0.4); color: white; }
-        .stButton > button[kind="secondary"] { border: 2px solid #1f1f1f; color: #1f1f1f; border-radius: 8px; transition: all 0.3s ease; background-color: white; font-family: 'Arial', sans-serif; font-weight: bold; }
-        .stButton > button[kind="secondary"]:hover { border: 2px solid #FF5800; color: #FF5800; background-color: #fffaf6; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(255, 88, 0, 0.1); }
-        .stDataFrame { border: none !important; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); background-color: white; padding: 10px; }
-        .streamlit-expanderHeader { font-size: 1.1rem; font-family: 'Play', sans-serif; font-weight: 700; color: #1f1f1f; border-radius: 8px; background-color: white; box-shadow: 0 2px 5px rgba(0,0,0,0.02); margin-bottom: 5px; }
+
+        /* Bakgrunn og generell tekst */
+        .stApp { background: linear-gradient(135deg, #fdfbfb 0%, #f4f4f4 100%); }
+        h1, h2, h3, h4, h5, h6 { color: #1f1f1f !important; font-family: 'Play', sans-serif; letter-spacing: -0.5px; }
+
+        /* Hovedtittel (Freidig-rød) */
+        .main-title { 
+            text-align: left; 
+            font-size: 3rem; 
+            font-weight: 800; 
+            background: -webkit-linear-gradient(45deg, #E3000F, #9b0b20); 
+            -webkit-background-clip: text; 
+            -webkit-text-fill-color: transparent; 
+            margin-bottom: 0.5rem; 
+            padding-top: 1rem; 
+        }
+
+        /* Freidig-gul understrek */
+        .title-underline {
+            height: 5px;
+            width: 120px;
+            background: linear-gradient(90deg, #FFD700 0%, #FFB300 100%);
+            margin-bottom: 2.5rem;
+            border-radius: 3px;
+        }
+
+        /* Hovedknapper (Rød med gul hover) */
+        .stButton > button[kind="primary"] { 
+            background: linear-gradient(90deg, #E3000F 0%, #C2000B 100%); 
+            color: white; 
+            border: 2px solid #E3000F; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 8px rgba(227, 0, 15, 0.25); 
+            transition: all 0.3s ease; 
+            font-family: 'Arial', sans-serif; 
+            font-weight: bold; 
+        }
+        .stButton > button[kind="primary"]:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 6px 14px rgba(227, 0, 15, 0.4); 
+            color: white; 
+            border: 2px solid #FFD700;
+        }
+
+        /* Sekundærknapper (Mørk med rød hover) */
+        .stButton > button[kind="secondary"] { 
+            border: 2px solid #1f1f1f; 
+            color: #1f1f1f; 
+            border-radius: 8px; 
+            transition: all 0.3s ease; 
+            background-color: white; 
+            font-family: 'Arial', sans-serif; 
+            font-weight: bold; 
+        }
+        .stButton > button[kind="secondary"]:hover { 
+            border: 2px solid #E3000F; 
+            color: #E3000F; 
+            background-color: #fff9f9; 
+            transform: translateY(-2px); 
+            box-shadow: 0 4px 8px rgba(227, 0, 15, 0.1); 
+        }
+
+        /* Datatabeller (Stilig skygge og gul toppkant) */
+        .stDataFrame { 
+            border: none !important; 
+            border-radius: 10px; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.06); 
+            background-color: white; 
+            padding: 10px; 
+            border-top: 4px solid #FFD700 !important; 
+        }
+
+        /* Expander / Trekkspill-menyer (Med rød kant til venstre) */
+        .streamlit-expanderHeader { 
+            font-size: 1.1rem; 
+            font-family: 'Play', sans-serif; 
+            font-weight: 700; 
+            color: #1f1f1f; 
+            border-radius: 8px; 
+            background-color: white; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.02); 
+            margin-bottom: 5px; 
+            border-left: 5px solid #E3000F; 
+        }
     </style>
     ''', unsafe_allow_html=True)
 
@@ -225,8 +299,8 @@ def generate_schedule_pdf(df, title="Dommeroppsett"):
     <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
     @page {{ size: A4 landscape; margin-top: 18mm; margin-bottom: 15mm; margin-left: 15.4mm; margin-right: 15.4mm; background-color: #ffffff; @bottom-right {{ content: "Side " counter(page) " av " counter(pages); font-family: 'Arial', sans-serif; font-size: 10pt; color: #1f1f1f; }} @bottom-left {{ content: "Generert fra Kamp- og Dommersystem"; font-family: 'Arial', sans-serif; font-size: 10pt; color: #1f1f1f; }} }}
     body {{ font-family: 'Arial', sans-serif; margin: 0; padding: 0; color: #000000; }}
-    .header {{ padding-bottom: 10px; margin-bottom: 20px; width: 100%; border-bottom: 2px solid #FF5800; }}
-    .header h1 {{ margin: 0; color: #FF5800; font-family: 'Play', sans-serif; font-size: 24pt; padding-bottom: 5px; font-weight: normal; }}
+    .header {{ padding-bottom: 10px; margin-bottom: 20px; width: 100%; border-bottom: 2px solid #E3000F; }}
+    .header h1 {{ margin: 0; color: #E3000F; font-family: 'Play', sans-serif; font-size: 24pt; padding-bottom: 5px; font-weight: normal; }}
     .header .meta {{ font-size: 11pt; color: #1f1f1f; margin-top: 10px; font-family: 'Arial', sans-serif; }}
     table {{ width: 100%; border-collapse: collapse; font-size: 10.5pt; margin-top: 15px; page-break-inside: avoid; }}
     th {{ background-color: #f2f2f2; color: #000000; text-align: left; padding: 10px 8px; font-weight: bold; border: 1pt solid #000000; text-transform: uppercase; font-size: 9pt; letter-spacing: 0.5px; }}
@@ -296,6 +370,7 @@ if 'logged_in' not in st.session_state:
     st.session_state.user_teams = []
 
 # -- SIDEBAR INNLOGGING --
+st.sidebar.image("FreidigCrest.avif", width=150)
 st.sidebar.title("Innlogging")
 
 if not st.session_state.logged_in:
@@ -363,7 +438,12 @@ else:
         st.rerun()
 
 user_role = st.session_state.user_role
-st.markdown('<h1 class="main-title">Kamp- og Dommeroppsett</h1>', unsafe_allow_html=True)
+
+# Legger til hovedtittel og den nye Freidig-gule streken under
+st.markdown('''
+    <h1 class="main-title">Dommerberamming barnehåndball Freidig Håndball DBH og D1</h1>
+    <div class="title-underline"></div>
+''', unsafe_allow_html=True)
 
 if user_role == "none":
     st.info("Vennligst logg inn via menyen til venstre for å få tilgang til systemet.")
@@ -448,7 +528,6 @@ if user_role == "dommer":
                 "arrangor": None,
                 "kampnr": None,
                 "runde": None
-
             }
         )
 
@@ -599,10 +678,14 @@ if user_role == "admin":
                                      VALUES (%s, %s, %s, %s)''', (ny_navn, ny_epost, ny_tlf, lag_str))
                         epost_som_brukes = ny_epost
                     else:
-                        epost_som_brukes = ny_epost if ny_epost else df_ansvarlige[df_ansvarlige['navn'] == ny_navn]['epost'].values[0]
-                        ny_tlf_val = ny_tlf if ny_tlf else df_ansvarlige[df_ansvarlige['navn'] == ny_navn]['telefon'].values[0]
+                        epost_som_brukes = ny_epost if ny_epost else \
+                        df_ansvarlige[df_ansvarlige['navn'] == ny_navn]['epost'].values[0]
+                        ny_tlf_val = ny_tlf if ny_tlf else \
+                        df_ansvarlige[df_ansvarlige['navn'] == ny_navn]['telefon'].values[0]
                         c.execute('''UPDATE dommer_ansvar
-                                     SET epost=%s, telefon=%s, lag_liste=%s
+                                     SET epost=%s,
+                                         telefon=%s,
+                                         lag_liste=%s
                                      WHERE navn = %s''', (epost_som_brukes, ny_tlf_val, lag_str, ny_navn))
 
                     if send_epost and epost_som_brukes:
@@ -726,9 +809,12 @@ if not view_df.empty:
         disabled=["dato", "hjemmelag", "bortelag", "turnering", "Interesserte dommere",
                   "status"], hide_index=True,
         column_config={
-            "dommer_1": st.column_config.SelectboxColumn("Dommer 1", options=aktiv_dommer_liste),
-            "dommer_2": st.column_config.SelectboxColumn("Dommer 2", options=aktiv_dommer_liste),
-            "observator": st.column_config.SelectboxColumn("Observatør", options=aktiv_dommer_liste),
+            "dommer_1": st.column_config.SelectboxColumn("Dommer 1 🔽",
+                                                         help="Klikk to ganger for å velge fra listen over aktive dommere.",
+                                                         options=aktiv_dommer_liste),
+            "dommer_2": st.column_config.SelectboxColumn("Dommer 2 🔽",
+                                                         help="Klikk to ganger for å velge fra listen over aktive dommere.",
+                                                         options=aktiv_dommer_liste),
             "Interesserte dommere": st.column_config.TextColumn("🙋‍♂️ Ønsker (Nivå | Kamper)"),
             "laast": st.column_config.CheckboxColumn("Låst (TA) 🔒"),
             "status": st.column_config.TextColumn("Status"),
@@ -738,7 +824,6 @@ if not view_df.empty:
             "runde": None
         }
     )
-
     col_save, col_clear, col_export = st.columns([1.5, 1.5, 2])
     with col_save:
         if st.button("Lagre Beramming", type="primary"):
