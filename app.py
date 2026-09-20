@@ -441,7 +441,7 @@ user_role = st.session_state.user_role
 
 # Legger til hovedtittel og den nye Freidig-gule streken under
 st.markdown('''
-    <h1 class="main-title">Dommerberamming barnehåndball Freidig Håndball DBH og D1</h1>
+    <h1 class="main-title">Dommerberamming Freidig Håndball DBH og D1</h1>
     <div class="title-underline"></div>
 ''', unsafe_allow_html=True)
 
