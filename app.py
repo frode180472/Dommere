@@ -441,9 +441,15 @@ if user_role == "dommer":
 
         edited_onsker = st.data_editor(
             kamper_df, hide_index=True,
-            disabled=["kampnr", "dato", "tid", "hjemmelag", "bortelag", "bane", "turnering", "arrangor"],
+            disabled=["dato", "tid", "hjemmelag", "bortelag", "bane", "turnering"],
             use_container_width=True,
-            column_config={"Ønsker å dømme": st.column_config.CheckboxColumn("Meld interesse", default=False)}
+            column_config={
+                "Ønsker å dømme": st.column_config.CheckboxColumn("Meld interesse", default=False),
+                "arrangor": None,
+                "kampnr": None,
+                "runde": None
+
+            }
         )
 
         if st.button("Lagre mine ønsker", type="primary"):
@@ -596,7 +602,7 @@ if user_role == "admin":
                         epost_som_brukes = ny_epost if ny_epost else df_ansvarlige[df_ansvarlige['navn'] == ny_navn]['epost'].values[0]
                         ny_tlf_val = ny_tlf if ny_tlf else df_ansvarlige[df_ansvarlige['navn'] == ny_navn]['telefon'].values[0]
                         c.execute('''UPDATE dommer_ansvar
-                                     SET epost=%s,telefon=%s,lag_liste=%s
+                                     SET epost=%s, telefon=%s, lag_liste=%s
                                      WHERE navn = %s''', (epost_som_brukes, ny_tlf_val, lag_str, ny_navn))
 
                     if send_epost and epost_som_brukes:
@@ -717,7 +723,7 @@ if not view_df.empty:
     st.markdown("Fyll inn dommere. **Huk av for 'Låst (TA)'** når kampen er ferdig berammet i MinIdrett.")
     edited_df = st.data_editor(
         display_df, num_rows="dynamic" if user_role == "admin" else "fixed", use_container_width=True,
-        disabled=["kampnr", "runde", "dato", "hjemmelag", "bortelag", "turnering", "arrangor", "Interesserte dommere",
+        disabled=["dato", "hjemmelag", "bortelag", "turnering", "Interesserte dommere",
                   "status"], hide_index=True,
         column_config={
             "dommer_1": st.column_config.SelectboxColumn("Dommer 1", options=aktiv_dommer_liste),
@@ -725,7 +731,11 @@ if not view_df.empty:
             "observator": st.column_config.SelectboxColumn("Observatør", options=aktiv_dommer_liste),
             "Interesserte dommere": st.column_config.TextColumn("🙋‍♂️ Ønsker (Nivå | Kamper)"),
             "laast": st.column_config.CheckboxColumn("Låst (TA) 🔒"),
-            "status": st.column_config.TextColumn("Status")
+            "status": st.column_config.TextColumn("Status"),
+            "arrangor": None,
+            "kampnr": None,
+            "observator": None,
+            "runde": None
         }
     )
 
