@@ -30,10 +30,9 @@ EXCEL_ALIASES = {
     'turnering': ['Turnering', 'Klasse', 'League']
 }
 
-ADMIN_PASSORD = "admin123"
-LAGLEDER_PASSORD = "dommer123"
-DOMMER_PASSORD = "fløyte"
-
+ADMIN_PASSORD = st.secrets["passwords"]["admin"]
+LAGLEDER_PASSORD = st.secrets["passwords"]["lagleder"]
+DOMMER_PASSORD = st.secrets["passwords"]["dommer"]
 
 # ==========================================
 # 2. STYLING (FREIDIG DESIGN)
