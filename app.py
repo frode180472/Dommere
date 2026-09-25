@@ -346,7 +346,8 @@ if user_role == "dommer":
         c.execute("SELECT COUNT(*) FROM dommer_status WHERE type_dommer=? AND aktiv=1", (nivaa,))
         antall_dommere_samme_nivaa = c.fetchone()[0] or 1
         antall_plasser = len(tilgjengelige_kamper) * 2
-        maks_kvote = max(2, math.ceil(antall_plasser / antall_dommere_samme_nivaa))
+        #maks_kvote = max(2, math.ceil(antall_plasser / antall_dommere_samme_nivaa))
+        maks_kvote = 999
 
         st.info(f"Basert på kapasitet og rettferdig fordeling kan du melde interesse på inntil **{maks_kvote}** av disse kampene.")
 
