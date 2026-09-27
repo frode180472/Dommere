@@ -793,7 +793,7 @@ if not view_df.empty:
         formatert_navn = f"{dnavn} ({nivaa} | {kamper_dømt} kamper)"
         onsker_dict.setdefault(knr, []).append(formatert_navn)
 
-    view_df['Interesserte dommere'] = view_df['kampnr'].map(lambda x: " \n ".join(onsker_dict.get(x, [])))
+    view_df['Interesserte dommere'] = view_df['kampnr'].map(lambda x: onsker_dict.get(x, []))
     if 'laast' not in view_df.columns: view_df['laast'] = False
     view_df['laast'] = view_df['laast'].astype(bool)
     if 'status' not in view_df.columns: view_df['status'] = ''
@@ -815,7 +815,7 @@ if not view_df.empty:
             "dommer_2": st.column_config.SelectboxColumn("Dommer 2 🔽",
                                                          help="Klikk to ganger for å velge fra listen over aktive dommere.",
                                                          options=aktiv_dommer_liste),
-            "Interesserte dommere": st.column_config.TextColumn("🙋‍♂️ Ønsker (Nivå | Kamper)"),
+            "Interesserte dommere": st.column_config.ListColumn("🙋‍♂️ Ønsker (Nivå | Kamper)", width="large"),
             "laast": st.column_config.CheckboxColumn("Låst (TA) 🔒"),
             "status": st.column_config.TextColumn("Status"),
             "arrangor": None,
