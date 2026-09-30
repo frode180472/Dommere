@@ -510,7 +510,7 @@ if user_role == "dommer":
         antall_dommere_samme_nivaa = c.fetchone()[0] or 1
         antall_plasser = len(tilgjengelige_kamper) * 2
         #maks_kvote = max(2, math.ceil(antall_plasser / antall_dommere_samme_nivaa))
-        maks_kvote = 999
+        maks_kvote = 99
 
         st.info(
             f"Basert på kapasitet og rettferdig fordeling kan du melde interesse på inntil **{maks_kvote}** av disse kampene.")
