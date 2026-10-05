@@ -265,7 +265,7 @@ def get_age_from_turnering(turnering_str):
 def get_allowed_ages(nivå, match_count, is_approved):
     nivå = str(nivå).strip()
     if nivå == 'Nivå 11':
-        return [9, 10, 11] if (match_count >= 10 and is_approved) else [9, 10]
+        return [9, 10, 11, 12] if (match_count >= 10 and is_approved) else [9, 10]
     elif nivå == 'Nivå 9':
         return [9, 10, 11, 12]
     elif nivå == 'Nivå 7':
