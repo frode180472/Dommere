@@ -15,6 +15,11 @@ from email.mime.multipart import MIMEMultipart
 # ==========================================
 # 1. KONSTANTER & ALIASER
 # ==========================================
+
+# Sett denne til True for å gi alle dommere tilgang til alle kamper midlertidig.
+# Sett tilbake til False for å aktivere Nivå-begrensningene igjen.
+OVERSTYR_NIVAA_KRAV = True
+
 EXCEL_ALIASES = {
     'kampnr': ['Kampnr', 'Kampnummer', 'Match ID'],
     'runde': ['Runde', 'Round'],
@@ -33,6 +38,7 @@ EXCEL_ALIASES = {
 ADMIN_PASSORD = st.secrets["passwords"]["admin"]
 LAGLEDER_PASSORD = st.secrets["passwords"]["lagleder"]
 DOMMER_PASSORD = st.secrets["passwords"]["dommer"]
+
 
 # ==========================================
 # 2. STYLING (FREIDIG DESIGN)
@@ -466,11 +472,19 @@ if user_role == "dommer":
 
     st.subheader(f"Velkommen, {st.session_state.user_name} 🟨")
     st.markdown(f"**Ditt nivå:** {nivaa} | **Kamper dømt:** {antall_kamper}")
-    if nivaa == 'Nivå 11' and antall_kamper >= 10:
+
+    # ---------------------------------------------------------
+    # NY LOGIKK FOR INFO-BOKSER (Håndterer overstyring)
+    # ---------------------------------------------------------
+    if OVERSTYR_NIVAA_KRAV:
+        st.warning(
+            "⚠️ **Midlertidig unntakstilstand:** Alle nivå- og alderssperrer er midlertidig deaktivert. Du kan nå se og melde interesse på alle åpne kamper. **Vennligst meld kun interesse på kamper du er trygg på at du kan dømme.**")
+    elif nivaa == 'Nivå 11' and antall_kamper >= 10:
         if er_godkjent:
             st.success("Du er godkjent for å dømme 11-årskamper!")
         else:
             st.info("Du har passert 10 kamper og avventer godkjenning fra lagleder for å dømme 11-årskamper.")
+    # ---------------------------------------------------------
 
     c.execute("""
               SELECT k.kampnr,
@@ -498,7 +512,14 @@ if user_role == "dommer":
     for kamp in alle_ulåste:
         alder = get_age_from_turnering(kamp[6])
         renset_turnering = re.sub(r'\s+', '', str(kamp[6]).lower())
-        if alder in tillatte_aldre and renset_turnering in selvbetjening_lag:
+
+        # ---------------------------------------------------------
+        # NY LOGIKK FOR TILGANG
+        # Hvis OVERSTYR_NIVAA_KRAV er True, ignoreres alderssjekken.
+        # ---------------------------------------------------------
+        har_alders_tilgang = OVERSTYR_NIVAA_KRAV or (alder in tillatte_aldre)
+
+        if har_alders_tilgang and renset_turnering in selvbetjening_lag:
             tilgjengelige_kamper.append(kamp)
 
     if tilgjengelige_kamper:
@@ -509,7 +530,6 @@ if user_role == "dommer":
         c.execute("SELECT COUNT(*) FROM dommer_status WHERE type_dommer=%s AND aktiv=TRUE", (nivaa,))
         antall_dommere_samme_nivaa = c.fetchone()[0] or 1
         antall_plasser = len(tilgjengelige_kamper) * 2
-        #maks_kvote = max(2, math.ceil(antall_plasser / antall_dommere_samme_nivaa))
         maks_kvote = 99
 
         st.info(
@@ -679,9 +699,9 @@ if user_role == "admin":
                         epost_som_brukes = ny_epost
                     else:
                         epost_som_brukes = ny_epost if ny_epost else \
-                        df_ansvarlige[df_ansvarlige['navn'] == ny_navn]['epost'].values[0]
+                            df_ansvarlige[df_ansvarlige['navn'] == ny_navn]['epost'].values[0]
                         ny_tlf_val = ny_tlf if ny_tlf else \
-                        df_ansvarlige[df_ansvarlige['navn'] == ny_navn]['telefon'].values[0]
+                            df_ansvarlige[df_ansvarlige['navn'] == ny_navn]['telefon'].values[0]
                         c.execute('''UPDATE dommer_ansvar
                                      SET epost=%s,
                                          telefon=%s,
