@@ -204,14 +204,13 @@ def init_db(conn):
                      dommer_navn TEXT PRIMARY KEY
                  )''')
 
-    # Legger til nye kolonner hvis de ikke finnes (støttet i Postgres)
     c.execute("ALTER TABLE dommer_ansvar ADD COLUMN IF NOT EXISTS selvbetjening BOOLEAN DEFAULT TRUE")
     c.execute("ALTER TABLE kamper ADD COLUMN IF NOT EXISTS laast BOOLEAN DEFAULT FALSE")
     c.execute("ALTER TABLE kamper ADD COLUMN IF NOT EXISTS status TEXT DEFAULT ''")
 
 
 def load_data(conn):
-    return execute_query_to_df("SELECT * FROM kamper", conn)
+    return execute_query_to_df("SELECT * FROM kamper ORDER BY dato ASC, tid ASC", conn)
 
 
 def sync_referees_to_db(db_df, conn, filepath='dommere.xlsx'):
@@ -401,7 +400,6 @@ if not st.session_state.logged_in:
                 if valgt_navn and pwd.strip() == LAGLEDER_PASSORD:
                     lag_string = df_ansvarlige[df_ansvarlige['navn'] == valgt_navn]['lag_liste'].iloc[0]
                     if pd.notna(lag_string) and lag_string:
-                        # Splitter KUN på loddrett strek
                         mine_lag = [l.strip() for l in lag_string.split("|")]
                     else:
                         mine_lag = []
@@ -444,7 +442,6 @@ else:
 
 user_role = st.session_state.user_role
 
-# Legger til hovedtittel og den nye Freidig-gule streken under
 st.markdown('''
     <h1 class="main-title">Dommerberamming Freidig Håndball DBH og D1</h1>
     <div class="title-underline"></div>
@@ -473,9 +470,6 @@ if user_role == "dommer":
     st.subheader(f"Velkommen, {st.session_state.user_name} 🟨")
     st.markdown(f"**Ditt nivå:** {nivaa} | **Kamper dømt:** {antall_kamper}")
 
-    # ---------------------------------------------------------
-    # NY LOGIKK FOR INFO-BOKSER (Håndterer overstyring)
-    # ---------------------------------------------------------
     if OVERSTYR_NIVAA_KRAV:
         st.warning(
             "⚠️ **Midlertidig unntakstilstand:** Alle nivå- og alderssperrer er midlertidig deaktivert. Du kan nå se og melde interesse på alle åpne kamper. **Vennligst meld kun interesse på kamper du er trygg på at du kan dømme.**")
@@ -484,7 +478,6 @@ if user_role == "dommer":
             st.success("Du er godkjent for å dømme 11-årskamper!")
         else:
             st.info("Du har passert 10 kamper og avventer godkjenning fra lagleder for å dømme 11-årskamper.")
-    # ---------------------------------------------------------
 
     c.execute("""
               SELECT k.kampnr,
@@ -513,10 +506,6 @@ if user_role == "dommer":
         alder = get_age_from_turnering(kamp[6])
         renset_turnering = re.sub(r'\s+', '', str(kamp[6]).lower())
 
-        # ---------------------------------------------------------
-        # NY LOGIKK FOR TILGANG
-        # Hvis OVERSTYR_NIVAA_KRAV er True, ignoreres alderssjekken.
-        # ---------------------------------------------------------
         har_alders_tilgang = OVERSTYR_NIVAA_KRAV or (alder in tillatte_aldre)
 
         if har_alders_tilgang and renset_turnering in selvbetjening_lag:
@@ -542,7 +531,7 @@ if user_role == "dommer":
         edited_onsker = st.data_editor(
             kamper_df, hide_index=True,
             disabled=["dato", "tid", "hjemmelag", "bortelag", "bane", "turnering"],
-            use_container_width=True,
+            width="stretch",
             column_config={
                 "Ønsker å dømme": st.column_config.CheckboxColumn("Meld interesse", default=False),
                 "arrangor": None,
@@ -589,7 +578,6 @@ if user_role == "admin":
                                                                                                                  "",
                                                                                                                  regex=False)
 
-                # Klipper bort alt etter første komma
                 if 'turnering' in df_final.columns: df_final['turnering'] = df_final['turnering'].astype(str).apply(
                     lambda x: x.split(',')[0].strip())
 
@@ -657,15 +645,19 @@ if user_role == "admin":
     with st.expander("Aktiver / Deaktiver Dommere"):
         df_dommere_status = execute_query_to_df("SELECT * FROM dommer_status ORDER BY navn", conn)
         df_dommere_status['aktiv'] = df_dommere_status['aktiv'].astype(bool)
-        edited_dommere = st.data_editor(df_dommere_status, hide_index=True, use_container_width=True,
-                                        column_config={"navn": st.column_config.TextColumn("Dommernavn", disabled=True),
-                                                       "type_dommer": st.column_config.TextColumn("Type / Nivå",
-                                                                                                  disabled=True),
-                                                       "aktiv": st.column_config.CheckboxColumn("Aktiv", default=True)})
+        edited_dommere = st.data_editor(
+            df_dommere_status, hide_index=True, width="stretch",
+            column_config={
+                "navn": st.column_config.TextColumn("Dommernavn", disabled=True),
+                "type_dommer": st.column_config.TextColumn("Type / Nivå", disabled=True),
+                "aktiv": st.column_config.CheckboxColumn("Aktiv", default=True)
+            }
+        )
         if st.button("Lagre Dommerstatus", type="secondary"):
             c = conn.cursor()
-            for _, row in edited_dommere.iterrows(): c.execute("UPDATE dommer_status SET aktiv=%s WHERE navn=%s",
-                                                               (bool(row['aktiv']), row['navn']))
+            for _, row in edited_dommere.iterrows():
+                c.execute("UPDATE dommer_status SET aktiv=%s WHERE navn=%s",
+                          (bool(row['aktiv']), row['navn']))
             st.success("Dommerstatus oppdatert!")
 
     st.divider()
@@ -722,8 +714,10 @@ if user_role == "admin":
         if not df_ansvarlige.empty:
             st.markdown("**Oversikt over eksisterende kontakter:**")
             st.info("Bruk nedtrekksmenyen over for å redigere årskullene, så formatet lagres riktig.")
-            edited_kontakter = st.data_editor(df_ansvarlige.drop(columns=['selvbetjening'], errors='ignore'),
-                                              hide_index=True, use_container_width=True, disabled=["lag_liste"])
+            edited_kontakter = st.data_editor(
+                df_ansvarlige.drop(columns=['selvbetjening'], errors='ignore'),
+                hide_index=True, width="stretch", disabled=["lag_liste"]
+            )
             if st.button("Oppdater endringer gjort i tabellen", type="secondary"):
                 c = conn.cursor()
                 for _, row in edited_kontakter.iterrows():
@@ -824,11 +818,19 @@ if not view_df.empty:
     display_df = view_df if filter_date == "Alle" else view_df[view_df['dato'] == filter_date]
 
     st.markdown("Fyll inn dommere. **Huk av for 'Låst (TA)'** når kampen er ferdig berammet i MinIdrett.")
+
+    kampnr_konfig = (
+        st.column_config.TextColumn("Kamp-ID", disabled=True)
+        if user_role == "admin"
+        else None
+    )
+
     edited_df = st.data_editor(
-        display_df, num_rows="dynamic" if user_role == "admin" else "fixed", use_container_width=True,
-        disabled=["dato", "hjemmelag", "bortelag", "turnering", "Interesserte dommere",
+        display_df, num_rows="dynamic" if user_role == "admin" else "fixed", width="stretch",
+        disabled=["kampnr", "dato", "hjemmelag", "bortelag", "turnering", "Interesserte dommere",
                   "status"], hide_index=True,
         column_config={
+            "kampnr": kampnr_konfig,
             "dommer_1": st.column_config.SelectboxColumn("Dommer 1 🔽",
                                                          help="Klikk to ganger for å velge fra listen over aktive dommere.",
                                                          options=aktiv_dommer_liste),
@@ -839,7 +841,6 @@ if not view_df.empty:
             "laast": st.column_config.CheckboxColumn("Låst (TA) 🔒"),
             "status": st.column_config.TextColumn("Status"),
             "arrangor": None,
-            "kampnr": None,
             "observator": None,
             "runde": None
         }
