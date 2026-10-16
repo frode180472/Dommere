@@ -1,5 +1,4 @@
 streamlit
 pandas
 openpyxl
-weasyprint
 psycopg2-binary

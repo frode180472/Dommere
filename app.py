@@ -7,17 +7,11 @@ import pandas as pd
 import streamlit as st
 import base64
 from datetime import date
-from weasyprint import HTML
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 # ==========================================
 # 1. KONSTANTER & ALIASER
 # ==========================================
 
-# Sett denne til True for å gi alle dommere tilgang til alle kamper midlertidig.
-# Sett tilbake til False for å aktivere Nivå-begrensningene igjen.
 OVERSTYR_NIVAA_KRAV = True
 
 EXCEL_ALIASES = {
@@ -48,11 +42,9 @@ def inject_custom_css():
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Play:wght@400;700&display=swap');
 
-        /* Bakgrunn og generell tekst */
         .stApp { background: linear-gradient(135deg, #fdfbfb 0%, #f4f4f4 100%); }
         h1, h2, h3, h4, h5, h6 { color: #1f1f1f !important; font-family: 'Play', sans-serif; letter-spacing: -0.5px; }
 
-        /* Hovedtittel (Freidig-rød) */
         .main-title { 
             text-align: left; 
             font-size: 3rem; 
@@ -64,7 +56,6 @@ def inject_custom_css():
             padding-top: 1rem; 
         }
 
-        /* Freidig-gul understrek */
         .title-underline {
             height: 5px;
             width: 120px;
@@ -73,7 +64,6 @@ def inject_custom_css():
             border-radius: 3px;
         }
 
-        /* Hovedknapper (Rød med gul hover) */
         .stButton > button[kind="primary"] { 
             background: linear-gradient(90deg, #E3000F 0%, #C2000B 100%); 
             color: white; 
@@ -91,7 +81,6 @@ def inject_custom_css():
             border: 2px solid #FFD700;
         }
 
-        /* Sekundærknapper (Mørk med rød hover) */
         .stButton > button[kind="secondary"] { 
             border: 2px solid #1f1f1f; 
             color: #1f1f1f; 
@@ -109,7 +98,6 @@ def inject_custom_css():
             box-shadow: 0 4px 8px rgba(227, 0, 15, 0.1); 
         }
 
-        /* Datatabeller (Stilig skygge og gul toppkant) */
         .stDataFrame { 
             border: none !important; 
             border-radius: 10px; 
@@ -119,7 +107,6 @@ def inject_custom_css():
             border-top: 4px solid #FFD700 !important; 
         }
 
-        /* Expander / Trekkspill-menyer (Med rød kant til venstre) */
         .streamlit-expanderHeader { 
             font-size: 1.1rem; 
             font-family: 'Play', sans-serif; 
@@ -279,47 +266,13 @@ def get_allowed_ages(nivå, match_count, is_approved):
 
 
 # ==========================================
-# 4. PDF GENERATOR & EPOST
+# 4. E-POST
 # ==========================================
-def generate_schedule_pdf(df, title="Dommeroppsett"):
-    df = df.fillna('')
-    if 'dato' in df.columns and 'tid' in df.columns:
-        df = df.sort_values(by=["dato", "tid"])
-    table_html = ""
-    current_date = ""
-    for index, row in df.iterrows():
-        if row["dato"] != current_date:
-            table_html += f'<tr class="date-group"><td colspan="6">{row["dato"]}</td></tr>'
-            current_date = row["dato"]
-        kamp_info = f'<strong>{row.get("hjemmelag", "")} - {row.get("bortelag", "")}</strong><br><span class="desc">{row.get("turnering", "")}</span>'
-        dommere = []
-        if str(row.get("dommer_1", "")).strip(): dommere.append(f'D1: {row.get("dommer_1", "")}')
-        if str(row.get("dommer_2", "")).strip(): dommere.append(f'D2: {row.get("dommer_2", "")}')
-        if str(row.get("observator", "")).strip(): dommere.append(f'Obs: {row.get("observator", "")}')
-        dommer_str = "<br>".join(dommere) if dommere else "<i>Ikke berammet</i>"
-        table_html += f'''<tr><td style="white-space: nowrap;">{row.get("tid", "")}</td><td style="font-size: 8pt; color: #555;">{row.get("kampnr", "")}</td><td>{kamp_info}</td><td>{row.get("bane", "")}</td><td>{row.get("arrangor", "")}</td><td>{dommer_str}</td></tr>'''
-
-    html_template = f'''
-    <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
-    @page {{ size: A4 landscape; margin-top: 18mm; margin-bottom: 15mm; margin-left: 15.4mm; margin-right: 15.4mm; background-color: #ffffff; @bottom-right {{ content: "Side " counter(page) " av " counter(pages); font-family: 'Arial', sans-serif; font-size: 10pt; color: #1f1f1f; }} @bottom-left {{ content: "Generert fra Kamp- og Dommersystem"; font-family: 'Arial', sans-serif; font-size: 10pt; color: #1f1f1f; }} }}
-    body {{ font-family: 'Arial', sans-serif; margin: 0; padding: 0; color: #000000; }}
-    .header {{ padding-bottom: 10px; margin-bottom: 20px; width: 100%; border-bottom: 2px solid #E3000F; }}
-    .header h1 {{ margin: 0; color: #E3000F; font-family: 'Play', sans-serif; font-size: 24pt; padding-bottom: 5px; font-weight: normal; }}
-    .header .meta {{ font-size: 11pt; color: #1f1f1f; margin-top: 10px; font-family: 'Arial', sans-serif; }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 10.5pt; margin-top: 15px; page-break-inside: avoid; }}
-    th {{ background-color: #f2f2f2; color: #000000; text-align: left; padding: 10px 8px; font-weight: bold; border: 1pt solid #000000; text-transform: uppercase; font-size: 9pt; letter-spacing: 0.5px; }}
-    td {{ padding: 10px 8px; border: 1pt solid #000000; vertical-align: top; line-height: 1.3; }}
-    .date-group td {{ background-color: #e2e8f0; color: #000000; font-weight: bold; font-size: 12pt; padding: 10px 8px; font-family: 'Play', sans-serif; border-bottom: 1pt solid #000000; }}
-    .desc {{ font-size: 9pt; color: #444; display: block; margin-top: 2px; font-style: italic; }}
-    tr {{ page-break-inside: avoid; }}
-    </style></head><body>
-    <div class="header"><h1>{title}</h1><div class="meta">Utskriftsdato: <strong>{date.today().strftime('%d.%m.%Y')}</strong></div></div>
-    <table><thead><tr><th style="width: 5%;">Tid</th><th style="width: 10%;">Kampnr</th><th style="width: 30%;">Kamp & Turnering</th><th style="width: 20%;">Bane</th><th style="width: 15%;">Arrangør</th><th style="width: 20%;">Dommere / Obs</th></tr></thead><tbody>{table_html}</tbody></table>
-    </body></html>'''
-    return HTML(string=html_template, base_url=os.path.abspath(os.getcwd())).write_pdf()
-
-
 def send_velkomst_epost(mottaker_epost, navn, lag_liste_str):
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
     try:
         smtp_server = st.secrets["email"]["smtp_server"]
         smtp_port = st.secrets["email"]["smtp_port"]
@@ -879,27 +832,3 @@ if not view_df.empty:
                                type="secondary")
 else:
     st.info("Fant ingen kamper.")
-
-# ==========================================
-# GENERER PDF
-# ==========================================
-st.divider()
-if not view_df.empty:
-    col1, col2 = st.columns(2)
-    with col1:
-        pdf_title = st.text_input("Tittel på dokumentet", value="Dommeroppsett")
-        pdf_filter = st.selectbox("Hvilke kamper skal inkluderes i PDF?",
-                                  ["Alle dine viste kamper"] + sorted(view_df['dato'].dropna().unique().tolist()))
-
-    if st.button("Generer PDF"):
-        with st.spinner("Lager PDF..."):
-            pdf_data_source = view_df if pdf_filter == "Alle dine viste kamper" else view_df[
-                view_df['dato'] == pdf_filter]
-            pdf_bytes = generate_schedule_pdf(pdf_data_source, title=pdf_title)
-            os.makedirs("output", exist_ok=True)
-            file_path = os.path.join("output", f"oppsett_{date.today().strftime('%Y%m%d')}.pdf")
-            with open(file_path, "wb") as f: f.write(pdf_bytes)
-            b64 = base64.b64encode(pdf_bytes).decode()
-            st.markdown(
-                f'''<a href="data:application/octet-stream;base64,{b64}" download="{os.path.basename(file_path)}" style="text-decoration: none;"><button style="border: 2px solid #1f1f1f; color: #1f1f1f; border-radius: 8px; background-color: white; font-family: 'Arial', sans-serif; font-weight: bold; padding: 0.5rem 1rem; cursor: pointer; transition: all 0.2s ease;">⬇️ Last ned PDF</button></a>''',
-                unsafe_allow_html=True)
