@@ -747,16 +747,32 @@ if not view_df.empty:
         else:
             st.info("Ingen kamper er tildelt ennå.")
 
-    c.execute("SELECT kampnr, dommer_navn FROM dommer_onsker")
-    onsker_data = c.fetchall()
+    # SUPERRASK HENTING AV DOMMERSTATISTIKK TIL ADMIN-TABELLEN
+    c.execute("""
+              SELECT dommer, COUNT(*)
+              FROM (SELECT dommer_1 as dommer
+                    FROM kamper
+                    WHERE dommer_1 != ''
+                      AND dommer_1 IS NOT NULL
+                    UNION ALL
+                    SELECT dommer_2 as dommer
+                    FROM kamper
+                    WHERE dommer_2 != ''
+                      AND dommer_2 IS NOT NULL) sub
+              GROUP BY dommer
+              """)
+    match_count_dict = dict(c.fetchall())
 
     c.execute("SELECT navn, type_dommer FROM dommer_status")
     nivaa_dict = {row[0]: row[1] for row in c.fetchall()}
 
+    c.execute("SELECT kampnr, dommer_navn FROM dommer_onsker")
+    onsker_data = c.fetchall()
+
     onsker_dict = {}
     for knr, dnavn in onsker_data:
         nivaa = nivaa_dict.get(dnavn, "Ukjent")
-        kamper_dømt = get_match_count(conn, dnavn)
+        kamper_dømt = match_count_dict.get(dnavn, 0)
         formatert_navn = f"{dnavn} ({nivaa} | {kamper_dømt} kamper)"
         onsker_dict.setdefault(knr, []).append(formatert_navn)
 
@@ -802,11 +818,10 @@ if not view_df.empty:
     with col_save:
         if st.button("Lagre Beramming", type="primary"):
             endret_antall = 0
-            # Finn radene som faktisk har endringer
+            # SJEKK KUN RADER SOM FAKTISK ER ENDRET
             for idx, row in edited_df.iterrows():
                 orig_row = display_df.loc[idx]
 
-                # Sjekk om noe har endret seg på denne raden
                 har_endring = (
                         str(row.get('dommer_1', '')) != str(orig_row.get('dommer_1', '')) or
                         str(row.get('dommer_2', '')) != str(orig_row.get('dommer_2', '')) or
