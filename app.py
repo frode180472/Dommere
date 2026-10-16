@@ -801,19 +801,41 @@ if not view_df.empty:
     col_save, col_clear, col_export = st.columns([1.5, 1.5, 2])
     with col_save:
         if st.button("Lagre Beramming", type="primary"):
-            for _, row in edited_df.iterrows():
-                c.execute('''UPDATE kamper
-                             SET dommer_1=%s,
-                                 dommer_2=%s,
-                                 observator=%s,
-                                 bane=%s,
-                                 tid=%s,
-                                 laast=%s
-                             WHERE kampnr = %s''',
-                          (str(row.get('dommer_1', '')), str(row.get('dommer_2', '')), str(row.get('observator', '')),
-                           str(row.get('bane', '')), str(row.get('tid', '')), bool(row.get('laast', False)),
-                           str(row['kampnr'])))
-            st.success("Oppdatert!")
+            endret_antall = 0
+            # Finn radene som faktisk har endringer
+            for idx, row in edited_df.iterrows():
+                orig_row = display_df.loc[idx]
+
+                # Sjekk om noe har endret seg på denne raden
+                har_endring = (
+                        str(row.get('dommer_1', '')) != str(orig_row.get('dommer_1', '')) or
+                        str(row.get('dommer_2', '')) != str(orig_row.get('dommer_2', '')) or
+                        str(row.get('observator', '')) != str(orig_row.get('observator', '')) or
+                        str(row.get('bane', '')) != str(orig_row.get('bane', '')) or
+                        str(row.get('tid', '')) != str(orig_row.get('tid', '')) or
+                        bool(row.get('laast', False)) != bool(orig_row.get('laast', False))
+                )
+
+                if har_endring:
+                    c.execute('''UPDATE kamper
+                                 SET dommer_1=%s,
+                                     dommer_2=%s,
+                                     observator=%s,
+                                     bane=%s,
+                                     tid=%s,
+                                     laast=%s
+                                 WHERE kampnr = %s''',
+                              (str(row.get('dommer_1', '')), str(row.get('dommer_2', '')),
+                               str(row.get('observator', '')),
+                               str(row.get('bane', '')), str(row.get('tid', '')), bool(row.get('laast', False)),
+                               str(row['kampnr'])))
+                    endret_antall += 1
+
+            if endret_antall > 0:
+                st.success(f"Oppdatert {endret_antall} kamp(er)!")
+                st.rerun()
+            else:
+                st.info("Ingen endringer å lagre.")
 
     with col_clear:
         if st.button("Fjern 'Ny/Endret'-varsler", type="secondary"):
