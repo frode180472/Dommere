@@ -806,7 +806,11 @@ if not view_df.empty:
     filter_date = st.selectbox("Filtrer på dato:", filter_options)
     display_df = view_df if filter_date == "Alle" else view_df[view_df['dato'] == filter_date]
 
-    st.markdown("Fyll inn dommere. **Huk av for 'Låst (TA)'** når kampen er ferdig berammet i MinIdrett.")
+    if user_role == "admin":
+        st.markdown("Fyll inn dommere. **Huk av for 'Låst (TA)'** når kampen er ferdig berammet i MinIdrett/TA.")
+    else:
+        st.markdown(
+            "Sett opp dommere på dine kamper. **Admin vil låse kampen** når den er ferdig berammet i Turneringsadmin (TA).")
 
     kampnr_konfig = (
         st.column_config.TextColumn("Kamp-ID", disabled=True)
