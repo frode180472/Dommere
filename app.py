@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta
 # ==========================================
 
 # Sett til True når du er klar til å kreve e-post-kode for ALLE brukere.
-# Når denne er False, brukes vanlige fellespassord som før, men du kan aktivere e-post-kode for enkeltbrukere.
+# Når denne er False, brukes vanlige fellespassord som før, men du kan teste e-post-kode på deg selv.
 KREVER_EPOST_INNLOGGING = False
 
 OVERSTYR_NIVAA_KRAV = True
@@ -197,9 +197,9 @@ def init_db(conn):
                  )''')
     c.execute('''CREATE TABLE IF NOT EXISTS engangskoder
                  (
-                     epost       TEXT PRIMARY KEY,
-                     kode        TEXT,
-                     utloper     TIMESTAMP
+                     epost   TEXT PRIMARY KEY,
+                     kode    TEXT,
+                     utloper TIMESTAMP
                  )''')
 
     c.execute("ALTER TABLE dommer_ansvar ADD COLUMN IF NOT EXISTS selvbetjening BOOLEAN DEFAULT TRUE")
@@ -218,7 +218,8 @@ def init_db(conn):
 
 
 def load_data(conn):
-    return execute_query_to_df("SELECT * FROM kamper WHERE (aktiv = TRUE OR aktiv IS NULL) ORDER BY dato ASC, tid ASC", conn)
+    return execute_query_to_df("SELECT * FROM kamper WHERE (aktiv = TRUE OR aktiv IS NULL) ORDER BY dato ASC, tid ASC",
+                               conn)
 
 
 def sync_referees_to_db(db_df, conn, filepath='dommere.xlsx'):
@@ -230,7 +231,8 @@ def sync_referees_to_db(db_df, conn, filepath='dommere.xlsx'):
                 df_dommere['Fullt Navn'] = df_dommere['Fornavn'].astype(str).str.strip() + " " + df_dommere[
                     'Etternavn'].astype(str).str.strip()
                 type_col = 'Dommer' if 'Dommer' in df_dommere.columns else None
-                epost_col = 'E-post' if 'E-post' in df_dommere.columns else ('Epost' if 'Epost' in df_dommere.columns else None)
+                epost_col = 'E-post' if 'E-post' in df_dommere.columns else (
+                    'Epost' if 'Epost' in df_dommere.columns else None)
                 for _, row in df_dommere.iterrows():
                     navn = str(row['Fullt Navn']).strip()
                     if navn and navn.lower() not in ['nan', 'none']:
@@ -245,7 +247,8 @@ def sync_referees_to_db(db_df, conn, filepath='dommere.xlsx'):
             if col in db_df.columns:
                 for navn in db_df[col].dropna().tolist():
                     navn_clean = str(navn).strip()
-                    if navn_clean and navn_clean.lower() not in ['nan', 'none', 'nat'] and navn_clean not in dommer_info:
+                    if navn_clean and navn_clean.lower() not in ['nan', 'none',
+                                                                 'nat'] and navn_clean not in dommer_info:
                         dommer_info[navn_clean] = ("", "")
     c = conn.cursor()
     for navn, info in dommer_info.items():
@@ -296,7 +299,9 @@ def generer_og_send_engangskode(conn, mottaker_epost, navn):
     utloper = datetime.now() + timedelta(minutes=15)
 
     c = conn.cursor()
-    c.execute("INSERT INTO engangskoder (epost, kode, utloper) VALUES (%s, %s, %s) ON CONFLICT (epost) DO UPDATE SET kode = EXCLUDED.kode, utloper = EXCLUDED.utloper", (mottaker_epost.lower().strip(), kode, utloper))
+    c.execute(
+        "INSERT INTO engangskoder (epost, kode, utloper) VALUES (%s, %s, %s) ON CONFLICT (epost) DO UPDATE SET kode = EXCLUDED.kode, utloper = EXCLUDED.utloper",
+        (mottaker_epost.lower().strip(), kode, utloper))
 
     try:
         import smtplib
@@ -311,7 +316,7 @@ def generer_og_send_engangskode(conn, mottaker_epost, navn):
         msg = MIMEText(tekst)
         msg['From'] = avsender
         msg['To'] = mottaker_epost
-        msg['Subject'] = "Innloggingskode: " + kode
+        msg['Subject'] = f"Innloggingskode: {kode}"
 
         server = smtplib.SMTP(smtp_server, smtp_port)
         server.starttls()
@@ -320,7 +325,7 @@ def generer_og_send_engangskode(conn, mottaker_epost, navn):
         server.quit()
         return True, "Koden er sendt til din e-post!"
     except Exception as e:
-        return False, "Feil ved sending av e-post: " + str(e)
+        return False, f"Feil ved sending av e-post: {e}"
 
 
 def verifiser_engangskode(conn, mottaker_epost, skrevet_kode):
@@ -349,6 +354,44 @@ def registrer_siste_innlogging(conn, tabell, navn):
             antall_innlogginger = COALESCE(antall_innlogginger, 0) + 1 
         WHERE navn = %s
     """, (navn,))
+
+
+def send_felles_epost(mottakere, emne, innhold):
+    import smtplib
+    from email.mime.text import MIMEText
+
+    try:
+        smtp_server = st.secrets["email"]["smtp_server"]
+        smtp_port = st.secrets["email"]["smtp_port"]
+        avsender = st.secrets["email"]["smtp_user"]
+        passord = st.secrets["email"]["smtp_password"]
+
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(avsender, passord)
+
+        sendt_antall = 0
+        feil_liste = []
+
+        for epost, navn in mottakere:
+            if not epost or str(epost).strip().lower() in ['nan', 'none', '']:
+                continue
+            try:
+                tekst = f"Hei {navn}!\n\n{innhold}\n\nVennlig hilsen,\nDommerberamming Freidig Håndball"
+                msg = MIMEText(tekst)
+                msg['From'] = avsender
+                msg['To'] = epost.strip()
+                msg['Subject'] = emne
+
+                server.send_message(msg)
+                sendt_antall += 1
+            except Exception as ex:
+                feil_liste.append(f"{navn} ({epost}): {ex}")
+
+        server.quit()
+        return sendt_antall, feil_liste
+    except Exception as e:
+        return 0, [f"SMTP-feil: {e}"]
 
 
 # ==========================================
@@ -411,11 +454,10 @@ if not st.session_state.logged_in:
                 if r:
                     epost_val, epost_aktivert = r[0] or "", bool(r[1])
 
-            # Sjekk om e-postinnlogging skal gjelde for denne brukeren
             bruk_epost_innlogging = KREVER_EPOST_INNLOGGING or epost_aktivert
 
             if bruk_epost_innlogging and valgt_navn:
-                st.sidebar.caption("E-postinnlogging aktivert for " + valgt_navn)
+                st.sidebar.caption(f"E-postinnlogging aktivert for {valgt_navn}")
                 if not epost_val:
                     st.sidebar.error("Ingen e-postadresse registrert på denne brukeren! Kontakt admin.")
                 else:
@@ -434,9 +476,11 @@ if not st.session_state.logged_in:
                             suksess, meld = verifiser_engangskode(conn, epost_val, skrevet_kode)
                             if suksess:
                                 lag_string = df_ansvarlige[df_ansvarlige['navn'] == valgt_navn]['lag_liste'].iloc[0]
-                                mine_lag = [l.strip() for l in lag_string.split("|")] if pd.notna(lag_string) and lag_string else []
+                                mine_lag = [l.strip() for l in lag_string.split("|")] if pd.notna(
+                                    lag_string) and lag_string else []
 
-                                registrer_siste_innlogging(conn, "dommer_ansvar", valgt_navn)
+                                reg_siste = "dommer_ansvar"
+                                registrer_siste_innlogging(conn, reg_siste, valgt_navn)
 
                                 st.session_state.logged_in = True
                                 st.session_state.user_role = "lagleder"
@@ -451,7 +495,8 @@ if not st.session_state.logged_in:
                 if st.sidebar.button("Logg inn", type="primary"):
                     if valgt_navn and pwd.strip() == LAGLEDER_PASSORD:
                         lag_string = df_ansvarlige[df_ansvarlige['navn'] == valgt_navn]['lag_liste'].iloc[0]
-                        mine_lag = [l.strip() for l in lag_string.split("|")] if pd.notna(lag_string) and lag_string else []
+                        mine_lag = [l.strip() for l in lag_string.split("|")] if pd.notna(
+                            lag_string) and lag_string else []
 
                         registrer_siste_innlogging(conn, "dommer_ansvar", valgt_navn)
 
@@ -482,7 +527,7 @@ if not st.session_state.logged_in:
             bruk_epost_innlogging = KREVER_EPOST_INNLOGGING or epost_aktivert
 
             if bruk_epost_innlogging and valgt_dommer:
-                st.sidebar.caption("E-postinnlogging aktivert for " + valgt_dommer)
+                st.sidebar.caption(f"E-postinnlogging aktivert for {valgt_dommer}")
                 if not epost_val:
                     st.sidebar.error("Ingen e-postadresse registrert på denne dommeren! Kontakt admin.")
                 else:
@@ -495,7 +540,7 @@ if not st.session_state.logged_in:
                         else:
                             st.sidebar.error(msg)
 
-                    if st.session_state.venter_paa_kode and st.session_state.epost_for_kode == epost_val:
+                    if st.session_state.venter_paa_kode and st.session_state.epost_for_kode == valgt_dommer:
                         skrevet_kode = st.sidebar.text_input("Skriv inn 6-sifret kode fra e-post")
                         if st.sidebar.button("Bekreft kode og logg inn", type="primary"):
                             suksess, meld = verifiser_engangskode(conn, epost_val, skrevet_kode)
@@ -525,9 +570,9 @@ if not st.session_state.logged_in:
                         st.sidebar.error("Feil passord eller manglende navn!")
 else:
     rolle_navn = "Administrator" if st.session_state.user_role == "admin" else st.session_state.user_name
-    st.sidebar.success("Logget inn som: " + rolle_navn)
+    st.sidebar.success(f"Logget inn som: {rolle_navn}")
     if st.session_state.user_role == "lagleder":
-        st.sidebar.caption("Ansvar for: " + ", ".join(st.session_state.user_teams))
+        st.sidebar.caption(f"Ansvar for: {', '.join(st.session_state.user_teams)}")
     if st.sidebar.button("Logg ut", type="secondary"):
         st.session_state.logged_in = False
         st.session_state.user_role = "none"
@@ -563,7 +608,7 @@ if user_role == "dommer":
 
     tillatte_aldre = get_allowed_ages(nivaa, antall_kamper, er_godkjent)
 
-    st.subheader("Velkommen, " + st.session_state.user_name + " 🟨")
+    st.subheader(f"Velkommen, {st.session_state.user_name} 🟨")
     st.markdown(f"**Ditt nivå:** {nivaa} | **Kamper dømt:** {antall_kamper}")
 
     if OVERSTYR_NIVAA_KRAV:
@@ -586,7 +631,7 @@ if user_role == "dommer":
                      k.arrangor
               FROM kamper k
               WHERE (k.laast = FALSE OR k.laast IS NULL)
-                 AND (k.aktiv = TRUE OR k.aktiv IS NULL)
+                AND (k.aktiv = TRUE OR k.aktiv IS NULL)
               ORDER BY k.dato, k.tid
               """)
     alle_ulåste = c.fetchall()
@@ -657,18 +702,26 @@ if user_role == "dommer":
 # ==========================================
 if user_role == "admin":
     with st.expander("📈 Brukerstatistikk & E-post-styring"):
-        st.subheader("Aktiver e-post-innlogging for enkeltbrukere")
-        st.info("Her kan du huke av for hvilke brukere som skal ha e-post-innlogging aktivert (f.eks. deg selv for testing).")
+        st.subheader("Send e-post og administrer e-post-innlogging")
+        st.info(
+            "Huk av for 'Velg' på personene du vil sende e-post til, eller huk av for 'E-post Innlogging' for å aktivere kode-innlogging.")
 
         col1, col2 = st.columns(2)
+        mottakere_valgt = []
+
         with col1:
             st.markdown("**Dommerkontakter / Lagledere**")
-            df_ansvar_stat = execute_query_to_df("SELECT navn, epost, epost_aktivert, siste_innlogging, antall_innlogginger FROM dommer_ansvar ORDER BY navn", conn)
+            df_ansvar_stat = execute_query_to_df(
+                "SELECT navn, epost, epost_aktivert, siste_innlogging, antall_innlogginger FROM dommer_ansvar ORDER BY navn",
+                conn)
             if not df_ansvar_stat.empty:
                 df_ansvar_stat['epost_aktivert'] = df_ansvar_stat['epost_aktivert'].astype(bool)
+                df_ansvar_stat['Velg'] = False
+
                 edited_ansvar = st.data_editor(
                     df_ansvar_stat, hide_index=True, width="stretch",
                     column_config={
+                        "Velg": st.column_config.CheckboxColumn("Velg 📩", default=False),
                         "navn": st.column_config.TextColumn("Navn", disabled=True),
                         "epost": st.column_config.TextColumn("E-post"),
                         "epost_aktivert": st.column_config.CheckboxColumn("E-post Innlogging"),
@@ -684,14 +737,23 @@ if user_role == "admin":
                     st.success("Oppdatert!")
                     st.rerun()
 
+                for _, r in edited_ansvar[edited_ansvar['Velg'] == True].iterrows():
+                    if r['epost']:
+                        mottakere_valgt.append((r['epost'], r['navn']))
+
         with col2:
             st.markdown("**Dommere**")
-            df_dommer_stat = execute_query_to_df("SELECT navn, epost, epost_aktivert, siste_innlogging, antall_innlogginger FROM dommer_status WHERE aktiv=TRUE ORDER BY navn", conn)
+            df_dommer_stat = execute_query_to_df(
+                "SELECT navn, epost, epost_aktivert, siste_innlogging, antall_innlogginger FROM dommer_status WHERE aktiv=TRUE ORDER BY navn",
+                conn)
             if not df_dommer_stat.empty:
                 df_dommer_stat['epost_aktivert'] = df_dommer_stat['epost_aktivert'].astype(bool)
+                df_dommer_stat['Velg'] = False
+
                 edited_dommer_stat = st.data_editor(
                     df_dommer_stat, hide_index=True, width="stretch",
                     column_config={
+                        "Velg": st.column_config.CheckboxColumn("Velg 📩", default=False),
                         "navn": st.column_config.TextColumn("Navn", disabled=True),
                         "epost": st.column_config.TextColumn("E-post"),
                         "epost_aktivert": st.column_config.CheckboxColumn("E-post Innlogging"),
@@ -706,6 +768,31 @@ if user_role == "admin":
                                   (row['epost'], bool(row['epost_aktivert']), row['navn']))
                     st.success("Oppdatert!")
                     st.rerun()
+
+                for _, r in edited_dommer_stat[edited_dommer_stat['Velg'] == True].iterrows():
+                    if r['epost']:
+                        mottakere_valgt.append((r['epost'], r['navn']))
+
+        st.divider()
+        st.markdown(f"### 📧 Send e-post til valgte brukere ({len(mottakere_valgt)} valgt)")
+
+        if mottakere_valgt:
+            st.caption("Valgte mottakere: " + ", ".join([f"{n} ({e})" for e, n in mottakere_valgt]))
+            epost_emne = st.text_input("E-post emne", value="Viktig melding fra Dommerberamming Freidig Håndball")
+            epost_innhold = st.text_area("Meldingstekst",
+                                         value="Hei!\n\nHusk å gå inn på https://dommere.streamlit.app og sjekke dine kamper.\n\nMed vennlig hilsen\nAdministrator",
+                                         height=150)
+
+            if st.button("🚀 Send e-post til valgte brukere nå", type="primary"):
+                with st.spinner(f"Sender e-post til {len(mottakere_valgt)} mottaker(e)..."):
+                    sendt_ant, feil = send_felles_epost(mottakere_valgt, epost_emne, epost_innhold)
+                    if sendt_ant > 0:
+                        st.success(f"Vellykket! Sendte {sendt_ant} e-post(er).")
+                    if feil:
+                        for f_msg in feil:
+                            st.error(f_msg)
+        else:
+            st.info("Huk av i boksene for 'Velg 📩' i tabellene ovenfor for å velge hvem som skal motta e-post.")
 
     with st.expander("Importér kamper fra Excel"):
         uploaded_file = st.file_uploader("Last opp Kamper (Excel)", type=["xlsx", "xls", "csv"])
@@ -733,13 +820,16 @@ if user_role == "admin":
                 imported_count = 0
                 c = conn.cursor()
 
-                importerte_kampnr = [str(k).replace(".0", "").strip() for k in df_final['kampnr'].dropna().tolist() if str(k).strip()]
+                importerte_kampnr = [str(k).replace(".0", "").strip() for k in df_final['kampnr'].dropna().tolist() if
+                                     str(k).strip()]
                 if importerte_kampnr:
                     c.execute("""
-                        UPDATE kamper 
-                        SET aktiv = FALSE, status = '❌ Kansellert/Flyttet' 
-                        WHERE kampnr NOT IN %s AND (aktiv = TRUE OR aktiv IS NULL)
-                    """, (tuple(importerte_kampnr),))
+                              UPDATE kamper
+                              SET aktiv  = FALSE,
+                                  status = '❌ Kansellert/Flyttet'
+                              WHERE kampnr NOT IN %s
+                                AND (aktiv = TRUE OR aktiv IS NULL)
+                              """, (tuple(importerte_kampnr),))
 
                 for _, row in df_final.iterrows():
                     knr = str(row.get('kampnr', '')).strip()
@@ -765,7 +855,7 @@ if user_role == "admin":
                                          arrangor=%s,
                                          turnering=%s,
                                          status=%s,
-                                         aktiv=TRUE
+                                         aktiv= TRUE
                                      WHERE kampnr = %s''',
                                   (row.get('runde'), ny_dato, ny_tid, row.get('hjemmelag'), row.get('bortelag'),
                                    ny_bane, row.get('arrangor'), row.get('turnering'), ny_status, knr))
@@ -957,12 +1047,18 @@ if not view_df.empty:
             st.info("Ingen kamper er tildelt ennå.")
 
     c.execute("""
-        SELECT dommer, COUNT(*) FROM (
-            SELECT dommer_1 as dommer FROM kamper WHERE dommer_1 != '' AND dommer_1 IS NOT NULL
-            UNION ALL
-            SELECT dommer_2 as dommer FROM kamper WHERE dommer_2 != '' AND dommer_2 IS NOT NULL
-        ) sub GROUP BY dommer
-    """)
+              SELECT dommer, COUNT(*)
+              FROM (SELECT dommer_1 as dommer
+                    FROM kamper
+                    WHERE dommer_1 != ''
+                      AND dommer_1 IS NOT NULL
+                    UNION ALL
+                    SELECT dommer_2 as dommer
+                    FROM kamper
+                    WHERE dommer_2 != ''
+                      AND dommer_2 IS NOT NULL) sub
+              GROUP BY dommer
+              """)
     match_count_dict = dict(c.fetchall())
 
     c.execute("SELECT navn, type_dommer FROM dommer_status")
@@ -991,7 +1087,8 @@ if not view_df.empty:
     if user_role == "admin":
         st.markdown("Fyll inn dommere. **Huk av for 'Låst (TA)'** når kampen er ferdig berammet i MinIdrett/TA.")
     else:
-        st.markdown("Sett opp dommere på dine kamper. **Admin vil låse kampen** når den er ferdig berammet i Turneringsadmin (TA).")
+        st.markdown(
+            "Sett opp dommere på dine kamper. **Admin vil låse kampen** når den er ferdig berammet i Turneringsadmin (TA).")
 
     kampnr_konfig = (
         st.column_config.TextColumn("Kamp-ID", disabled=True)
@@ -1027,12 +1124,12 @@ if not view_df.empty:
                 orig_row = display_df.loc[idx]
 
                 har_endring = (
-                    str(row.get('dommer_1', '')) != str(orig_row.get('dommer_1', '')) or
-                    str(row.get('dommer_2', '')) != str(orig_row.get('dommer_2', '')) or
-                    str(row.get('observator', '')) != str(orig_row.get('observator', '')) or
-                    str(row.get('bane', '')) != str(orig_row.get('bane', '')) or
-                    str(row.get('tid', '')) != str(orig_row.get('tid', '')) or
-                    bool(row.get('laast', False)) != bool(orig_row.get('laast', False))
+                        str(row.get('dommer_1', '')) != str(orig_row.get('dommer_1', '')) or
+                        str(row.get('dommer_2', '')) != str(orig_row.get('dommer_2', '')) or
+                        str(row.get('observator', '')) != str(orig_row.get('observator', '')) or
+                        str(row.get('bane', '')) != str(orig_row.get('bane', '')) or
+                        str(row.get('tid', '')) != str(orig_row.get('tid', '')) or
+                        bool(row.get('laast', False)) != bool(orig_row.get('laast', False))
                 )
 
                 if har_endring:
@@ -1044,7 +1141,8 @@ if not view_df.empty:
                                      tid=%s,
                                      laast=%s
                                  WHERE kampnr = %s''',
-                              (str(row.get('dommer_1', '')), str(row.get('dommer_2', '')), str(row.get('observator', '')),
+                              (str(row.get('dommer_1', '')), str(row.get('dommer_2', '')),
+                               str(row.get('observator', '')),
                                str(row.get('bane', '')), str(row.get('tid', '')), bool(row.get('laast', False)),
                                str(row['kampnr'])))
                     endret_antall += 1
