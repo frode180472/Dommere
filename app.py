@@ -194,10 +194,12 @@ def init_db(conn):
     c.execute("ALTER TABLE dommer_ansvar ADD COLUMN IF NOT EXISTS selvbetjening BOOLEAN DEFAULT TRUE")
     c.execute("ALTER TABLE kamper ADD COLUMN IF NOT EXISTS laast BOOLEAN DEFAULT FALSE")
     c.execute("ALTER TABLE kamper ADD COLUMN IF NOT EXISTS status TEXT DEFAULT ''")
+    c.execute("ALTER TABLE kamper ADD COLUMN IF NOT EXISTS aktiv BOOLEAN DEFAULT TRUE")
 
 
 def load_data(conn):
-    return execute_query_to_df("SELECT * FROM kamper ORDER BY dato ASC, tid ASC", conn)
+    return execute_query_to_df("SELECT * FROM kamper WHERE (aktiv = TRUE OR aktiv IS NULL) ORDER BY dato ASC, tid ASC",
+                               conn)
 
 
 def sync_referees_to_db(db_df, conn, filepath='dommere.xlsx'):
@@ -442,8 +444,8 @@ if user_role == "dommer":
                      k.turnering,
                      k.arrangor
               FROM kamper k
-              WHERE k.laast = FALSE
-                 OR k.laast IS NULL
+              WHERE (k.laast = FALSE OR k.laast IS NULL)
+                AND (k.aktiv = TRUE OR k.aktiv IS NULL)
               ORDER BY k.dato, k.tid
               """)
     alle_ulåste = c.fetchall()
@@ -538,10 +540,23 @@ if user_role == "admin":
 
                 imported_count = 0
                 c = conn.cursor()
-                for _, row in df_final.iterrows():
-                    if not row.get('kampnr'): continue
 
-                    c.execute("SELECT dato, tid, bane, status FROM kamper WHERE kampnr=%s", (row['kampnr'],))
+                importerte_kampnr = [str(k).replace(".0", "").strip() for k in df_final['kampnr'].dropna().tolist() if
+                                     str(k).strip()]
+                if importerte_kampnr:
+                    c.execute("""
+                              UPDATE kamper
+                              SET aktiv  = FALSE,
+                                  status = '❌ Kansellert/Flyttet'
+                              WHERE kampnr NOT IN %s
+                                AND (aktiv = TRUE OR aktiv IS NULL)
+                              """, (tuple(importerte_kampnr),))
+
+                for _, row in df_final.iterrows():
+                    knr = str(row.get('kampnr', '')).strip()
+                    if not knr: continue
+
+                    c.execute("SELECT dato, tid, bane, status FROM kamper WHERE kampnr=%s", (knr,))
                     eksisterende = c.fetchone()
 
                     if eksisterende:
@@ -560,15 +575,16 @@ if user_role == "admin":
                                          bane=%s,
                                          arrangor=%s,
                                          turnering=%s,
-                                         status=%s
+                                         status=%s,
+                                         aktiv= TRUE
                                      WHERE kampnr = %s''',
                                   (row.get('runde'), ny_dato, ny_tid, row.get('hjemmelag'), row.get('bortelag'),
-                                   ny_bane, row.get('arrangor'), row.get('turnering'), ny_status, row['kampnr']))
+                                   ny_bane, row.get('arrangor'), row.get('turnering'), ny_status, knr))
                     else:
                         c.execute('''INSERT INTO kamper (kampnr, runde, dato, tid, hjemmelag, bortelag, bane, arrangor,
-                                                         dommer_1, dommer_2, observator, turnering, status)
-                                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
-                                  (row['kampnr'], row.get('runde'), row.get('dato'), row.get('tid'),
+                                                         dommer_1, dommer_2, observator, turnering, status, aktiv)
+                                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE)''',
+                                  (knr, row.get('runde'), row.get('dato'), row.get('tid'),
                                    row.get('hjemmelag'), row.get('bortelag'), row.get('bane'), row.get('arrangor'),
                                    row.get('dommer_1'), row.get('dommer_2'), row.get('observator'),
                                    row.get('turnering'), '🆕 Ny'))
@@ -724,6 +740,10 @@ else:
     renset_ansvar = [re.sub(r'\s+', '', str(t).lower()) for t in st.session_state.user_teams]
     mask = df_all['turnering'].apply(lambda x: re.sub(r'\s+', '', str(x).lower()) in renset_ansvar)
     view_df = df_all[mask].copy()
+
+    vis_laaste = st.checkbox("Vis også låste kamper (TA)", value=False)
+    if not vis_laaste:
+        view_df = view_df[view_df['laast'] == False]
 
 if not view_df.empty:
     with st.expander("📊 Vis dommerstatistikk (Antall tildelte kamper)"):
