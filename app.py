@@ -43,7 +43,7 @@ DOMMER_PASSORD = st.secrets["passwords"]["dommer"]
 # 2. STYLING (FREIDIG DESIGN)
 # ==========================================
 def inject_custom_css():
-    st.markdown('''
+    st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Play:wght@400;700&display=swap');
 
@@ -124,7 +124,7 @@ def inject_custom_css():
             border-left: 5px solid #E3000F; 
         }
     </style>
-    ''', unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
 
 # ==========================================
@@ -347,7 +347,6 @@ def verifiser_engangskode(conn, mottaker_epost, skrevet_kode):
 
     if skrevet_kode.strip() == lagret_kode:
         c.execute("DELETE FROM engangskoder WHERE epost = %s", (mottaker_epost.lower().strip(),))
-        # Marker e-post som bekreftet i begge tabeller
         c.execute("UPDATE dommer_status SET epost_bekreftet = TRUE WHERE LOWER(epost) LIKE %s",
                   ('%' + mottaker_epost.lower().strip() + '%',))
         c.execute("UPDATE dommer_ansvar SET epost_bekreftet = TRUE WHERE LOWER(epost) LIKE %s",
@@ -419,10 +418,19 @@ st.set_page_config(page_title="Kampoppsett", layout="wide")
 inject_custom_css()
 
 conn = get_db_connection()
-init_db(conn)
 
+
+@st.cache_resource(ttl=3600)
+def oppstart_databasesynk():
+    c_conn = get_db_connection()
+    init_db(c_conn)
+    df_temp = load_data(c_conn)
+    sync_referees_to_db(df_temp, c_conn, 'dommere.xlsx')
+    return True
+
+
+oppstart_databasesynk()
 df_all = load_data(conn)
-sync_referees_to_db(df_all, conn, 'dommere.xlsx')
 
 turnering_liste = []
 if not df_all.empty:
@@ -903,12 +911,12 @@ if user_role == "admin":
                 st.error(f"Feil ved import: {e}")
 
     with st.expander("Importér Dommerregister fra Excel"):
-        uploaded_file = st.file_uploader("Last opp Dommere (Excel)", type=["xlsx", "xls"])
-        if uploaded_file and st.button("Importér Dommere", type="primary"):
+        uploaded_dommere = st.file_uploader("Last opp Dommere (Excel)", type=["xlsx", "xls"])
+        if uploaded_dommere and st.button("Importér Dommere", type="primary"):
             try:
                 temp_filename = "temp_dommere_upload.xlsx"
                 with open(temp_filename, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
+                    f.write(uploaded_dommere.getbuffer())
                 sync_referees_to_db(df_all, conn, temp_filename)
                 os.remove(temp_filename)
                 st.success("Suksess! Dommerregisteret ble oppdatert.")
