@@ -724,11 +724,10 @@ if user_role == "admin":
         st.info(
             "Huk av for 'Velg' på personene du vil sende e-post til, eller huk av for 'E-post Innlogging' for å aktivere kode-innlogging.")
 
-        col1, col2 = st.columns(2)
+        tab_lagledere, tab_dommere = st.tabs(["👥 Dommerkontakter / Lagledere", "🏃‍♂️ Dommere"])
         mottakere_valgt = []
 
-        with col1:
-            st.markdown("**Dommerkontakter / Lagledere**")
+        with tab_lagledere:
             df_ansvar_stat = execute_query_to_df(
                 "SELECT navn, epost, epost_bekreftet, motta_varsler, epost_aktivert, siste_innlogging, antall_innlogginger FROM dommer_ansvar ORDER BY navn",
                 conn)
@@ -765,8 +764,7 @@ if user_role == "admin":
                     if r['epost']:
                         mottakere_valgt.append((r['epost'], r['navn']))
 
-        with col2:
-            st.markdown("**Dommere**")
+        with tab_dommere:
             df_dommer_stat = execute_query_to_df(
                 "SELECT navn, epost, epost_bekreftet, motta_varsler, epost_aktivert, siste_innlogging, antall_innlogginger FROM dommer_status WHERE aktiv=TRUE ORDER BY navn",
                 conn)
