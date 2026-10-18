@@ -216,6 +216,12 @@ def init_db(conn):
     c.execute("ALTER TABLE dommer_ansvar ADD COLUMN IF NOT EXISTS antall_innlogginger INT DEFAULT 0")
     c.execute("ALTER TABLE dommer_ansvar ADD COLUMN IF NOT EXISTS epost_aktivert BOOLEAN DEFAULT FALSE")
 
+    c.execute("ALTER TABLE dommer_status ADD COLUMN IF NOT EXISTS epost_bekreftet BOOLEAN DEFAULT FALSE")
+    c.execute("ALTER TABLE dommer_status ADD COLUMN IF NOT EXISTS motta_varsler BOOLEAN DEFAULT TRUE")
+
+    c.execute("ALTER TABLE dommer_ansvar ADD COLUMN IF NOT EXISTS epost_bekreftet BOOLEAN DEFAULT FALSE")
+    c.execute("ALTER TABLE dommer_ansvar ADD COLUMN IF NOT EXISTS motta_varsler BOOLEAN DEFAULT TRUE")
+
 
 def load_data(conn):
     return execute_query_to_df("SELECT * FROM kamper WHERE (aktiv = TRUE OR aktiv IS NULL) ORDER BY dato ASC, tid ASC",
@@ -341,6 +347,11 @@ def verifiser_engangskode(conn, mottaker_epost, skrevet_kode):
 
     if skrevet_kode.strip() == lagret_kode:
         c.execute("DELETE FROM engangskoder WHERE epost = %s", (mottaker_epost.lower().strip(),))
+        # Marker e-post som bekreftet i begge tabeller
+        c.execute("UPDATE dommer_status SET epost_bekreftet = TRUE WHERE LOWER(epost) LIKE %s",
+                  ('%' + mottaker_epost.lower().strip() + '%',))
+        c.execute("UPDATE dommer_ansvar SET epost_bekreftet = TRUE WHERE LOWER(epost) LIKE %s",
+                  ('%' + mottaker_epost.lower().strip() + '%',))
         return True, "Vellykket innlogging!"
 
     return False, "Feil kode."
@@ -373,20 +384,27 @@ def send_felles_epost(mottakere, emne, innhold):
         sendt_antall = 0
         feil_liste = []
 
-        for epost, navn in mottakere:
-            if not epost or str(epost).strip().lower() in ['nan', 'none', '']:
-                continue
-            try:
-                tekst = f"Hei {navn}!\n\n{innhold}\n\nVennlig hilsen,\nDommerberamming Freidig Håndball"
-                msg = MIMEText(tekst)
-                msg['From'] = avsender
-                msg['To'] = epost.strip()
-                msg['Subject'] = emne
+        bunntekst = "\n\n---\nDu mottar denne e-posten fordi du er registrert i Dommerberamming Freidig Håndball.\nVil du reservere deg mot e-poster? Svar 'Avmeld' på denne e-posten."
+        fullt_innhold = innhold + bunntekst
 
-                server.send_message(msg)
-                sendt_antall += 1
-            except Exception as ex:
-                feil_liste.append(f"{navn} ({epost}): {ex}")
+        for epost_streng, navn in mottakere:
+            if not epost_streng or str(epost_streng).strip().lower() in ['nan', 'none', '']:
+                continue
+
+            epost_liste = [e.strip() for e in str(epost_streng).replace(',', ';').split(';') if e.strip()]
+
+            for epost in epost_liste:
+                try:
+                    tekst = f"Hei {navn}!\n\n{fullt_innhold}"
+                    msg = MIMEText(tekst)
+                    msg['From'] = avsender
+                    msg['To'] = epost
+                    msg['Subject'] = emne
+
+                    server.send_message(msg)
+                    sendt_antall += 1
+                except Exception as ex:
+                    feil_liste.append(f"{navn} ({epost}): {ex}")
 
         server.quit()
         return sendt_antall, feil_liste
@@ -540,7 +558,7 @@ if not st.session_state.logged_in:
                         else:
                             st.sidebar.error(msg)
 
-                    if st.session_state.venter_paa_kode and st.session_state.epost_for_kode == valgt_dommer:
+                    if st.session_state.venter_paa_kode and st.session_state.epost_for_kode == epost_val:
                         skrevet_kode = st.sidebar.text_input("Skriv inn 6-sifret kode fra e-post")
                         if st.sidebar.button("Bekreft kode og logg inn", type="primary"):
                             suksess, meld = verifiser_engangskode(conn, epost_val, skrevet_kode)
@@ -712,18 +730,23 @@ if user_role == "admin":
         with col1:
             st.markdown("**Dommerkontakter / Lagledere**")
             df_ansvar_stat = execute_query_to_df(
-                "SELECT navn, epost, epost_aktivert, siste_innlogging, antall_innlogginger FROM dommer_ansvar ORDER BY navn",
+                "SELECT navn, epost, epost_bekreftet, motta_varsler, epost_aktivert, siste_innlogging, antall_innlogginger FROM dommer_ansvar ORDER BY navn",
                 conn)
             if not df_ansvar_stat.empty:
                 df_ansvar_stat['epost_aktivert'] = df_ansvar_stat['epost_aktivert'].astype(bool)
                 df_ansvar_stat['Velg'] = False
+
+                df_ansvar_stat['epost_bekreftet'] = df_ansvar_stat['epost_bekreftet'].astype(bool)
+                df_ansvar_stat['motta_varsler'] = df_ansvar_stat['motta_varsler'].astype(bool)
 
                 edited_ansvar = st.data_editor(
                     df_ansvar_stat, hide_index=True, width="stretch",
                     column_config={
                         "Velg": st.column_config.CheckboxColumn("Velg 📩", default=False),
                         "navn": st.column_config.TextColumn("Navn", disabled=True),
-                        "epost": st.column_config.TextColumn("E-post"),
+                        "epost": st.column_config.TextColumn("E-post (Sema-separert)"),
+                        "epost_bekreftet": st.column_config.CheckboxColumn("Bekreftet ✅", disabled=True),
+                        "motta_varsler": st.column_config.CheckboxColumn("Motta Varsler 🔔", default=True),
                         "epost_aktivert": st.column_config.CheckboxColumn("E-post Innlogging"),
                         "siste_innlogging": st.column_config.DatetimeColumn("Sist Logget Inn", disabled=True),
                         "antall_innlogginger": st.column_config.NumberColumn("Antall", disabled=True)
@@ -732,8 +755,9 @@ if user_role == "admin":
                 if st.button("Lagre Endringer for Kontakter", type="secondary"):
                     c = conn.cursor()
                     for _, row in edited_ansvar.iterrows():
-                        c.execute("UPDATE dommer_ansvar SET epost=%s, epost_aktivert=%s WHERE navn=%s",
-                                  (row['epost'], bool(row['epost_aktivert']), row['navn']))
+                        c.execute(
+                            "UPDATE dommer_ansvar SET epost=%s, epost_aktivert=%s, motta_varsler=%s WHERE navn=%s",
+                            (row['epost'], bool(row['epost_aktivert']), bool(row['motta_varsler']), row['navn']))
                     st.success("Oppdatert!")
                     st.rerun()
 
@@ -744,18 +768,23 @@ if user_role == "admin":
         with col2:
             st.markdown("**Dommere**")
             df_dommer_stat = execute_query_to_df(
-                "SELECT navn, epost, epost_aktivert, siste_innlogging, antall_innlogginger FROM dommer_status WHERE aktiv=TRUE ORDER BY navn",
+                "SELECT navn, epost, epost_bekreftet, motta_varsler, epost_aktivert, siste_innlogging, antall_innlogginger FROM dommer_status WHERE aktiv=TRUE ORDER BY navn",
                 conn)
             if not df_dommer_stat.empty:
                 df_dommer_stat['epost_aktivert'] = df_dommer_stat['epost_aktivert'].astype(bool)
                 df_dommer_stat['Velg'] = False
+
+                df_dommer_stat['epost_bekreftet'] = df_dommer_stat['epost_bekreftet'].astype(bool)
+                df_dommer_stat['motta_varsler'] = df_dommer_stat['motta_varsler'].astype(bool)
 
                 edited_dommer_stat = st.data_editor(
                     df_dommer_stat, hide_index=True, width="stretch",
                     column_config={
                         "Velg": st.column_config.CheckboxColumn("Velg 📩", default=False),
                         "navn": st.column_config.TextColumn("Navn", disabled=True),
-                        "epost": st.column_config.TextColumn("E-post"),
+                        "epost": st.column_config.TextColumn("E-post (Sema-separert)"),
+                        "epost_bekreftet": st.column_config.CheckboxColumn("Bekreftet ✅", disabled=True),
+                        "motta_varsler": st.column_config.CheckboxColumn("Motta Varsler 🔔", default=True),
                         "epost_aktivert": st.column_config.CheckboxColumn("E-post Innlogging"),
                         "siste_innlogging": st.column_config.DatetimeColumn("Sist Logget Inn", disabled=True),
                         "antall_innlogginger": st.column_config.NumberColumn("Antall", disabled=True)
@@ -764,8 +793,9 @@ if user_role == "admin":
                 if st.button("Lagre Endringer for Dommere", type="secondary"):
                     c = conn.cursor()
                     for _, row in edited_dommer_stat.iterrows():
-                        c.execute("UPDATE dommer_status SET epost=%s, epost_aktivert=%s WHERE navn=%s",
-                                  (row['epost'], bool(row['epost_aktivert']), row['navn']))
+                        c.execute(
+                            "UPDATE dommer_status SET epost=%s, epost_aktivert=%s, motta_varsler=%s WHERE navn=%s",
+                            (row['epost'], bool(row['epost_aktivert']), bool(row['motta_varsler']), row['navn']))
                     st.success("Oppdatert!")
                     st.rerun()
 
@@ -875,12 +905,12 @@ if user_role == "admin":
                 st.error(f"Feil ved import: {e}")
 
     with st.expander("Importér Dommerregister fra Excel"):
-        uploaded_dommere = st.file_uploader("Last opp Dommere (Excel)", type=["xlsx", "xls"])
-        if uploaded_dommere and st.button("Importér Dommere", type="primary"):
+        uploaded_file = st.file_uploader("Last opp Dommere (Excel)", type=["xlsx", "xls"])
+        if uploaded_file and st.button("Importér Dommere", type="primary"):
             try:
                 temp_filename = "temp_dommere_upload.xlsx"
                 with open(temp_filename, "wb") as f:
-                    f.write(uploaded_dommere.getbuffer())
+                    f.write(uploaded_file.getbuffer())
                 sync_referees_to_db(df_all, conn, temp_filename)
                 os.remove(temp_filename)
                 st.success("Suksess! Dommerregisteret ble oppdatert.")
