@@ -13,10 +13,7 @@ from datetime import date, datetime, timedelta
 # 1. KONSTANTER & KONFIGURASJON
 # ==========================================
 
-# Sett til True når du er klar til å kreve e-post-kode for ALLE brukere.
-# Når denne er False, brukes vanlige fellespassord som før, men du kan teste e-post-kode på deg selv.
 KREVER_EPOST_INNLOGGING = False
-
 OVERSTYR_NIVAA_KRAV = True
 
 EXCEL_ALIASES = {
@@ -37,6 +34,7 @@ EXCEL_ALIASES = {
 ADMIN_PASSORD = st.secrets["passwords"]["admin"]
 LAGLEDER_PASSORD = st.secrets["passwords"]["lagleder"]
 DOMMER_PASSORD = st.secrets["passwords"]["dommer"]
+OBSERVATOR_PASSORD = st.secrets["passwords"].get("observator", DOMMER_PASSORD)
 
 
 # ==========================================
@@ -222,6 +220,9 @@ def init_db(conn):
     c.execute("ALTER TABLE dommer_ansvar ADD COLUMN IF NOT EXISTS epost_bekreftet BOOLEAN DEFAULT FALSE")
     c.execute("ALTER TABLE dommer_ansvar ADD COLUMN IF NOT EXISTS motta_varsler BOOLEAN DEFAULT TRUE")
 
+    # Kolonne for om brukeren har observatør-tilgang
+    c.execute("ALTER TABLE dommer_status ADD COLUMN IF NOT EXISTS kan_vaere_observator BOOLEAN DEFAULT FALSE")
+
 
 def load_data(conn):
     return execute_query_to_df("SELECT * FROM kamper WHERE (aktiv = TRUE OR aktiv IS NULL) ORDER BY dato ASC, tid ASC",
@@ -239,12 +240,26 @@ def sync_referees_to_db(db_df, conn, filepath='dommere.xlsx'):
                 type_col = 'Dommer' if 'Dommer' in df_dommere.columns else None
                 epost_col = 'E-post' if 'E-post' in df_dommere.columns else (
                     'Epost' if 'Epost' in df_dommere.columns else None)
+
+                # Identifiser eventuell observatør-kolonne i Excel
+                obs_col = None
+                for col in df_dommere.columns:
+                    if str(col).strip().lower() in ['observatør', 'observator', 'kan være observatør', 'is_observer']:
+                        obs_col = col
+                        break
+
                 for _, row in df_dommere.iterrows():
                     navn = str(row['Fullt Navn']).strip()
                     if navn and navn.lower() not in ['nan', 'none']:
                         dtype = str(row[type_col]).strip() if type_col and pd.notna(row[type_col]) else ""
                         epost = str(row[epost_col]).strip() if epost_col and pd.notna(row[epost_col]) else ""
-                        dommer_info[navn] = (dtype, epost)
+
+                        er_obs = False
+                        if obs_col and pd.notna(row[obs_col]):
+                            val = str(row[obs_col]).strip().lower()
+                            er_obs = val in ['true', 'ja', '1', 'yes', 't']
+
+                        dommer_info[navn] = (dtype, epost, er_obs)
         except Exception:
             pass
 
@@ -255,22 +270,33 @@ def sync_referees_to_db(db_df, conn, filepath='dommere.xlsx'):
                     navn_clean = str(navn).strip()
                     if navn_clean and navn_clean.lower() not in ['nan', 'none',
                                                                  'nat'] and navn_clean not in dommer_info:
-                        dommer_info[navn_clean] = ("", "")
+                        dommer_info[navn_clean] = ("", "", False)
     c = conn.cursor()
     for navn, info in dommer_info.items():
-        dtype, epost = info if isinstance(info, tuple) else (info, "")
-        c.execute(
-            "INSERT INTO dommer_status (navn, type_dommer, epost, aktiv) VALUES (%s, %s, %s, TRUE) ON CONFLICT (navn) DO NOTHING",
-            (navn, dtype, epost))
-        if dtype or epost:
-            c.execute(
-                "UPDATE dommer_status SET type_dommer=COALESCE(NULLIF(%s, ''), type_dommer), epost=COALESCE(NULLIF(%s, ''), epost) WHERE navn=%s",
-                (dtype, epost, navn))
+        if isinstance(info, tuple):
+            dtype, epost, er_obs = info
+        else:
+            dtype, epost, er_obs = info, "", False
+
+        c.execute("""
+                  INSERT INTO dommer_status (navn, type_dommer, epost, kan_vaere_observator, aktiv)
+                  VALUES (%s, %s, %s, %s, TRUE)
+                  ON CONFLICT (navn) DO UPDATE SET type_dommer          = COALESCE(NULLIF(EXCLUDED.type_dommer, ''),
+                                                                                   dommer_status.type_dommer),
+                                                   epost                = COALESCE(NULLIF(EXCLUDED.epost, ''), dommer_status.epost),
+                                                   kan_vaere_observator = EXCLUDED.kan_vaere_observator
+                  """, (navn, dtype, epost, er_obs))
 
 
 def get_active_referees_list(conn):
     c = conn.cursor()
     c.execute("SELECT navn FROM dommer_status WHERE aktiv=TRUE ORDER BY navn")
+    return [""] + [row[0] for row in c.fetchall()]
+
+
+def get_active_observers_list(conn):
+    c = conn.cursor()
+    c.execute("SELECT navn FROM dommer_status WHERE aktiv=TRUE AND kan_vaere_observator=TRUE ORDER BY navn")
     return [""] + [row[0] for row in c.fetchall()]
 
 
@@ -453,7 +479,8 @@ st.sidebar.image("FreidigCrest.avif", width=150)
 st.sidebar.title("Innlogging")
 
 if not st.session_state.logged_in:
-    login_type = st.sidebar.radio("Logg inn som:", ["Administrator", "Dommerkontakt / Lagleder", "Dommer"])
+    login_type = st.sidebar.radio("Logg inn som:",
+                                  ["Administrator", "Dommerkontakt / Lagleder", "Dommer", "Observatør"])
 
     if login_type == "Administrator":
         pwd = st.sidebar.text_input("Administrator passord", type="password")
@@ -594,9 +621,31 @@ if not st.session_state.logged_in:
                         st.rerun()
                     else:
                         st.sidebar.error("Feil passord eller manglende navn!")
+
+    elif login_type == "Observatør":
+        aktiv_observator_liste = get_active_observers_list(conn)
+        if len(aktiv_observator_liste) <= 1:
+            st.sidebar.info(
+                "Ingen aktive observatører registrert ennå. Sett opp rettigheter i admin-panelet eller importer fra Excel.")
+        else:
+            valgt_observator = st.sidebar.selectbox("Hvem er du?", aktiv_observator_liste)
+            pwd = st.sidebar.text_input("Observatør passord", type="password")
+
+            if st.sidebar.button("Logg inn", type="primary"):
+                if valgt_observator and pwd.strip() == OBSERVATOR_PASSORD:
+                    registrer_siste_innlogging(conn, "dommer_status", valgt_observator)
+
+                    st.session_state.logged_in = True
+                    st.session_state.user_role = "observator"
+                    st.session_state.user_name = valgt_observator
+                    st.session_state.user_teams = []
+                    st.rerun()
+                else:
+                    st.sidebar.error("Feil passord eller manglende navn!")
+
 else:
     rolle_navn = "Administrator" if st.session_state.user_role == "admin" else st.session_state.user_name
-    st.sidebar.success(f"Logget inn som: {rolle_navn}")
+    st.sidebar.success(f"Logget inn som: {rolle_navn} ({st.session_state.user_role.capitalize()})")
     if st.session_state.user_role == "lagleder":
         st.sidebar.caption(f"Ansvar for: {', '.join(st.session_state.user_teams)}")
     if st.sidebar.button("Logg ut", type="secondary"):
@@ -616,6 +665,59 @@ st.markdown('''
 
 if user_role == "none":
     st.info("Vennligst logg inn via menyen til venstre for å få tilgang til systemet.")
+    st.stop()
+
+# ==========================================
+# OBSERVATØR-VISNING
+# ==========================================
+if user_role == "observator":
+    st.subheader(f"Velkommen, {st.session_state.user_name} 🔍")
+    st.markdown("Her har du oversikt over kamper. Du kan skrive deg på som observatør på kamper der feltet er ledig.")
+
+    filter_options = ["Alle"] + sorted(df_all['dato'].dropna().unique().tolist())
+    filter_date = st.selectbox("Filtrer på dato:", filter_options)
+    display_df = df_all if filter_date == "Alle" else df_all[df_all['dato'] == filter_date]
+
+    aktive_observatorer = get_active_observers_list(conn)
+
+    edited_obs_df = st.data_editor(
+        display_df,
+        hide_index=True,
+        width="stretch",
+        disabled=["kampnr", "runde", "dato", "tid", "hjemmelag", "bortelag", "bane", "arrangor", "dommer_1", "dommer_2",
+                  "turnering", "laast", "status"],
+        column_config={
+            "kampnr": None,
+            "runde": None,
+            "arrangor": None,
+            "dommer_1": st.column_config.TextColumn("Dommer 1 (Skrivebeskyttet)"),
+            "dommer_2": st.column_config.TextColumn("Dommer 2 (Skrivebeskyttet)"),
+            "observator": st.column_config.SelectboxColumn(
+                "Observatør 👁️",
+                help="Velg ditt navn dersom du skal observere kampen.",
+                options=aktive_observatorer
+            ),
+        }
+    )
+
+    if st.button("Lagre Observatør-endringer", type="primary"):
+        c = conn.cursor()
+        endret_antall = 0
+        for idx, row in edited_obs_df.iterrows():
+            orig_row = display_df.loc[idx]
+            ny_obs = str(row.get('observator', '')).strip()
+            gammel_obs = str(orig_row.get('observator', '')).strip()
+
+            if ny_obs != gammel_obs:
+                c.execute("UPDATE kamper SET observator=%s WHERE kampnr=%s", (ny_obs, str(row['kampnr'])))
+                endret_antall += 1
+
+        if endret_antall > 0:
+            st.success(f"Oppdatert observatør på {endret_antall} kamp(er)!")
+            st.rerun()
+        else:
+            st.info("Ingen endringer å lagre.")
+
     st.stop()
 
 # ==========================================
@@ -654,7 +756,8 @@ if user_role == "dommer":
                      k.bortelag,
                      k.bane,
                      k.turnering,
-                     k.arrangor
+                     k.arrangor,
+                     k.observator
               FROM kamper k
               WHERE (k.laast = FALSE OR k.laast IS NULL)
                 AND (k.aktiv = TRUE OR k.aktiv IS NULL)
@@ -681,7 +784,7 @@ if user_role == "dommer":
     if tilgjengelige_kamper:
         kamper_df = pd.DataFrame(tilgjengelige_kamper,
                                  columns=['kampnr', 'dato', 'tid', 'hjemmelag', 'bortelag', 'bane', 'turnering',
-                                          'arrangor'])
+                                          'arrangor', 'observator'])
 
         c.execute("SELECT COUNT(*) FROM dommer_status WHERE type_dommer=%s AND aktiv=TRUE", (nivaa,))
         antall_dommere_samme_nivaa = c.fetchone()[0] or 1
@@ -697,10 +800,11 @@ if user_role == "dommer":
 
         edited_onsker = st.data_editor(
             kamper_df, hide_index=True,
-            disabled=["dato", "tid", "hjemmelag", "bortelag", "bane", "turnering"],
+            disabled=["dato", "tid", "hjemmelag", "bortelag", "bane", "turnering", "observator"],
             width="stretch",
             column_config={
                 "Ønsker å dømme": st.column_config.CheckboxColumn("Meld interesse", default=False),
+                "observator": st.column_config.TextColumn("Observatør 👁️", disabled=True),
                 "arrangor": None,
                 "kampnr": None,
                 "runde": None
@@ -925,24 +1029,31 @@ if user_role == "admin":
                 st.error(f"Feil ved import av dommere: {e}")
 
     st.divider()
-    st.subheader("Administrer Dommere")
-    with st.expander("Aktiver / Deaktiver Dommere"):
+    st.subheader("Administrer Dommere og Observatører")
+    with st.expander("Aktiver / Deaktiver Dommere og Observatørrettigheter"):
         df_dommere_status = execute_query_to_df("SELECT * FROM dommer_status ORDER BY navn", conn)
         df_dommere_status['aktiv'] = df_dommere_status['aktiv'].astype(bool)
+        if 'kan_vaere_observator' not in df_dommere_status.columns:
+            df_dommere_status['kan_vaere_observator'] = False
+        else:
+            df_dommere_status['kan_vaere_observator'] = df_dommere_status['kan_vaere_observator'].astype(bool)
+
         edited_dommere = st.data_editor(
             df_dommere_status, hide_index=True, width="stretch",
             column_config={
-                "navn": st.column_config.TextColumn("Dommernavn", disabled=True),
+                "navn": st.column_config.TextColumn("Navn", disabled=True),
                 "type_dommer": st.column_config.TextColumn("Type / Nivå", disabled=True),
+                "kan_vaere_observator": st.column_config.CheckboxColumn("Er Observatør 👁️", default=False),
                 "aktiv": st.column_config.CheckboxColumn("Aktiv", default=True)
             }
         )
-        if st.button("Lagre Dommerstatus", type="secondary"):
+        if st.button("Lagre Dommer- og Observatørstatus", type="secondary"):
             c = conn.cursor()
             for _, row in edited_dommere.iterrows():
-                c.execute("UPDATE dommer_status SET aktiv=%s WHERE navn=%s",
-                          (bool(row['aktiv']), row['navn']))
-            st.success("Dommerstatus oppdatert!")
+                c.execute("UPDATE dommer_status SET aktiv=%s, kan_vaere_observator=%s WHERE navn=%s",
+                          (bool(row['aktiv']), bool(row['kan_vaere_observator']), row['navn']))
+            st.success("Status oppdatert!")
+            st.rerun()
 
     st.divider()
     st.subheader("Register for Dommerkontakter")
@@ -962,8 +1073,6 @@ if user_role == "admin":
             ny_tlf = col2.text_input("Telefon (La stå tom for å beholde eksisterende)")
             valgte_lag = col2.multiselect("Velg årskull/turnering de har ansvar for:", turnering_liste)
 
-            send_epost = st.checkbox("Send velkomst-epost med innlogging ved lagring")
-
             if st.form_submit_button("Lagre Kontakt"):
                 if ny_navn and valgte_lag:
                     c = conn.cursor()
@@ -972,7 +1081,6 @@ if user_role == "admin":
                     if valgt_handling == "-- Opprett ny kontakt --":
                         c.execute('''INSERT INTO dommer_ansvar (navn, epost, telefon, lag_liste)
                                      VALUES (%s, %s, %s, %s)''', (ny_navn, ny_epost, ny_tlf, lag_str))
-                        epost_som_brukes = ny_epost
                     else:
                         epost_som_brukes = ny_epost if ny_epost else \
                             df_ansvarlige[df_ansvarlige['navn'] == ny_navn]['epost'].values[0]
@@ -983,12 +1091,6 @@ if user_role == "admin":
                                          telefon=%s,
                                          lag_liste=%s
                                      WHERE navn = %s''', (epost_som_brukes, ny_tlf_val, lag_str, ny_navn))
-
-                    if send_epost and epost_som_brukes:
-                        if send_velkomst_epost(epost_som_brukes, ny_navn, ", ".join(valgte_lag)):
-                            st.toast("Velkomst-epost sendt!", icon="📧")
-                        else:
-                            st.warning("Klarte ikke å sende e-post. Sjekk secrets.toml.")
 
                     st.success(f"Oppdatert ansvar for {ny_navn}!")
                     st.rerun()
@@ -1019,7 +1121,6 @@ c = conn.cursor()
 if user_role == "lagleder":
     st.subheader(f"Lagleder Dashboard: {st.session_state.user_name}")
 
-    # 1. SELVBETJENING TOGGLE
     c.execute("SELECT selvbetjening FROM dommer_ansvar WHERE navn=%s", (st.session_state.user_name,))
     sb_status = c.fetchone()
     current_sb = bool(sb_status[0]) if sb_status else True
@@ -1028,7 +1129,6 @@ if user_role == "lagleder":
         c.execute("UPDATE dommer_ansvar SET selvbetjening=%s WHERE navn=%s", (bool(ny_sb), st.session_state.user_name))
         st.success("Selvbetjeningsstatus oppdatert!")
 
-    # 2. GODKJENNING AV NIVÅ 11
     c.execute("""
               SELECT ds.navn
               FROM dommer_status ds
@@ -1048,7 +1148,7 @@ if user_role == "lagleder":
     st.divider()
 
 if user_role == "admin":
-    st.subheader("Beramming av dommere (Alle kamper)")
+    st.subheader("Beramming av dommere og observatører (Alle kamper)")
     view_df = df_all.copy()
 else:
     st.subheader("Mine kamper")
@@ -1116,12 +1216,15 @@ if not view_df.empty:
     if 'status' not in view_df.columns: view_df['status'] = ''
 
     aktiv_dommer_liste = get_active_referees_list(conn)
+    aktiv_observator_liste = get_active_observers_list(conn)
+
     filter_options = ["Alle"] + sorted(view_df['dato'].dropna().unique().tolist())
     filter_date = st.selectbox("Filtrer på dato:", filter_options)
     display_df = view_df if filter_date == "Alle" else view_df[view_df['dato'] == filter_date]
 
     if user_role == "admin":
-        st.markdown("Fyll inn dommere. **Huk av for 'Låst (TA)'** når kampen er ferdig berammet i MinIdrett/TA.")
+        st.markdown(
+            "Fyll inn dommere og observatører. **Huk av for 'Låst (TA)'** når kampen er ferdig berammet i MinIdrett/TA.")
     else:
         st.markdown(
             "Sett opp dommere på dine kamper. **Admin vil låse kampen** når den er ferdig berammet i Turneringsadmin (TA).")
@@ -1144,11 +1247,12 @@ if not view_df.empty:
             "dommer_2": st.column_config.SelectboxColumn("Dommer 2 🔽",
                                                          help="Klikk to ganger for å velge fra listen over aktive dommere.",
                                                          options=aktiv_dommer_liste),
+            "observator": st.column_config.SelectboxColumn("Observatør 👁️",
+                                                           options=aktiv_observator_liste),
             "Interesserte dommere": st.column_config.ListColumn("🙋‍♂️ Ønsker (Nivå | Kamper)", width="large"),
             "laast": st.column_config.CheckboxColumn("Låst (TA) 🔒"),
             "status": st.column_config.TextColumn("Status"),
             "arrangor": None,
-            "observator": None,
             "runde": None
         }
     )
