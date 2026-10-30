@@ -220,7 +220,7 @@ def init_db(conn):
     c.execute("ALTER TABLE dommer_ansvar ADD COLUMN IF NOT EXISTS epost_bekreftet BOOLEAN DEFAULT FALSE")
     c.execute("ALTER TABLE dommer_ansvar ADD COLUMN IF NOT EXISTS motta_varsler BOOLEAN DEFAULT TRUE")
 
-    # Kolonne for om brukeren har observatør-tilgang
+    # Kolonne for observatør-tilgang
     c.execute("ALTER TABLE dommer_status ADD COLUMN IF NOT EXISTS kan_vaere_observator BOOLEAN DEFAULT FALSE")
 
 
@@ -721,7 +721,7 @@ if user_role == "observator":
     st.stop()
 
 # ==========================================
-# DOMMER-VISNING (SELVBETJENING)
+# DOMMER-VISNING (TILDELTE KAMPER & SELVBETJENING)
 # ==========================================
 if user_role == "dommer":
     c = conn.cursor()
@@ -738,6 +738,58 @@ if user_role == "dommer":
 
     st.subheader(f"Velkommen, {st.session_state.user_name} 🟨")
     st.markdown(f"**Ditt nivå:** {nivaa} | **Kamper dømt:** {antall_kamper}")
+
+    # 1. MINE TILDELTE KAMPER (Skrivebeskyttet visning inkl. observatør)
+    st.markdown("### 📋 Mine tildelte kamper")
+    i_dag = date.today().strftime('%Y-%m-%d')
+
+    c.execute("""
+              SELECT dato,
+                     tid,
+                     bane,
+                     turnering,
+                     hjemmelag,
+                     bortelag,
+                     dommer_1,
+                     dommer_2,
+                     observator
+              FROM kamper
+              WHERE (dommer_1 = %s OR dommer_2 = %s)
+                AND (aktiv = TRUE OR aktiv IS NULL)
+                AND dato >= %s
+              ORDER BY dato ASC, tid ASC
+              """, (st.session_state.user_name, st.session_state.user_name, i_dag))
+    mine_tildelte = c.fetchall()
+
+    if mine_tildelte:
+        df_mine = pd.DataFrame(mine_tildelte, columns=[
+            'Dato', 'Tid', 'Bane', 'Turnering', 'Hjemmelag', 'Bortelag', 'Dommer 1', 'Dommer 2', 'Observatør'
+        ])
+
+
+        def finn_makker(row):
+            if row['Dommer 1'] == st.session_state.user_name:
+                return row['Dommer 2'] if row['Dommer 2'] else "Ikke satt"
+            return row['Dommer 1'] if row['Dommer 1'] else "Ikke satt"
+
+
+        df_mine['Makker'] = df_mine.apply(finn_makker, axis=1)
+        df_mine['Observatør'] = df_mine['Observatør'].apply(lambda x: x if x else "Ingen")
+
+        visning_mine = df_mine[['Dato', 'Tid', 'Bane', 'Turnering', 'Hjemmelag', 'Bortelag', 'Makker', 'Observatør']]
+
+        st.dataframe(
+            visning_mine,
+            hide_index=True,
+            width="stretch"
+        )
+    else:
+        st.info("Du har ingen kommende berammede kamper for øyeblikket.")
+
+    st.divider()
+
+    # 2. LEDIGE KAMPER FOR INTERESSEPÅMELDING (Selvbetjening)
+    st.markdown("### 🙋 Ledige kamper – meld interesse")
 
     if OVERSTYR_NIVAA_KRAV:
         st.warning(
@@ -761,8 +813,9 @@ if user_role == "dommer":
               FROM kamper k
               WHERE (k.laast = FALSE OR k.laast IS NULL)
                 AND (k.aktiv = TRUE OR k.aktiv IS NULL)
+                AND k.dato >= %s
               ORDER BY k.dato, k.tid
-              """)
+              """, (i_dag,))
     alle_ulåste = c.fetchall()
 
     c.execute("SELECT lag_liste FROM dommer_ansvar WHERE selvbetjening=TRUE")
