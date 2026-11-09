@@ -5,3 +5,7 @@
 __pycache__/
 .envvenv/
 venv/
+<<<<<<< HEAD
+=======
+.streamlit/secrets.toml
+>>>>>>> afa9d333385fbc8821f1206778841b590050c714
