@@ -1,8 +1,4 @@
 streamlit
 pandas
 openpyxl
-<<<<<<< HEAD
-weasyprint
-=======
->>>>>>> afa9d333385fbc8821f1206778841b590050c714
 psycopg2-binary
